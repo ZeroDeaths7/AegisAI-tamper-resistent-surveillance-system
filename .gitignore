@@ -1,0 +1,31 @@
+# Python
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+*.so
+
+# Virtual Environment
+# This is the most important one!
+venv/
+*.env
+.env
+
+# IDE / Editor Files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Local Test Files
+# Add any local test scripts you don't want to commit
+test_camera.py
+
+# Build/Dist artifacts (Good practice)
+build/
+dist/
+*.egg-info/

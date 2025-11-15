@@ -83,7 +83,7 @@ let systemState = {
         blur: { value: 0, status: 'secure' },
         shake: { value: 0, status: 'secure' },
         glare: { value: 0, status: 'secure' },
-        liveness: { value: 1, status: 'secure' }
+        liveness: { value: 'INITIALIZING...', status: 'secure' }
     }
 };
 
@@ -262,11 +262,23 @@ socket.on('detection_update', (data) => {
     }
 
     if (data.liveness) {
-        const livenessStatus = data.liveness.frozen ? 'alert' : 'secure';
-        updateMetric('liveness', data.liveness.frozen ? 0 : 1, livenessStatus);
+        // Display status text instead of numeric value
+        let livenessStatus = 'secure';
+        if (data.liveness.frozen || data.liveness.blackout || data.liveness.major_tamper) {
+            livenessStatus = 'alert';
+        } else if (!data.liveness.is_active) {
+            livenessStatus = 'warning';
+        }
+        
+        // Show the text status instead of numeric value
+        updateMetric('liveness', data.liveness.status, livenessStatus);
 
         if (data.liveness.frozen) {
-            triggerAlert('LIVENESS', 'Feed Frozen - Potential Replay Attack!');
+            triggerAlert('LIVENESS', 'Frozen Feed Detected - Potential Replay Attack!');
+        } else if (data.liveness.blackout) {
+            triggerAlert('LIVENESS', 'Blackout Detected - Camera Covered!');
+        } else if (data.liveness.major_tamper) {
+            triggerAlert('LIVENESS', 'Major Tamper Detected - Scene Change!');
         }
     }
 
@@ -336,8 +348,8 @@ document.addEventListener('keydown', (event) => {
     }
 
     if (event.key.toLowerCase() === 'l') {
-        triggerAlert('LIVENESS', 'Test: Feed Frozen');
-        updateMetric('liveness', 0, 'alert');
+        triggerAlert('LIVENESS', 'Test: Frozen Feed Detected');
+        updateMetric('liveness', 'FROZEN FEED ALERT', 'alert');
     }
 
     if (event.key.toLowerCase() === 'r') {
@@ -345,7 +357,7 @@ document.addEventListener('keydown', (event) => {
         updateMetric('blur', 75, 'secure');
         updateMetric('shake', 0.5, 'secure');
         updateMetric('glare', 0, 'secure');
-        updateMetric('liveness', 1, 'secure');
+        updateMetric('liveness', 'LIVE', 'secure');
         alertMessage.textContent = '✓ System Active - All Sensors Online';
         addLogEntry('System reset', 'secure');
     }
@@ -427,8 +439,13 @@ function startVideoStream() {
                 }
 
                 if (data.liveness) {
-                    const livenessStatus = data.liveness.frozen ? 'alert' : 'secure';
-                    updateMetric('liveness', data.liveness.frozen ? 0 : 1, livenessStatus);
+                    let livenessStatus = 'secure';
+                    if (data.liveness.frozen || data.liveness.blackout || data.liveness.major_tamper) {
+                        livenessStatus = 'alert';
+                    } else if (!data.liveness.is_active) {
+                        livenessStatus = 'warning';
+                    }
+                    updateMetric('liveness', data.liveness.status, livenessStatus);
                 }
             })
             .catch(error => {

@@ -33,6 +33,13 @@ CAMERA_INDEX = 0
 BLUR_FIX_ENABLED = True
 BLUR_FIX_STRENGTH = 5
 
+# Liveness detection configuration
+LIVENESS_THRESHOLD = 3.0        # LOW threshold: detects freezing/static feed
+MAJOR_TAMPER_THRESHOLD = 60.0   # HIGH threshold: detects sudden, massive scene change
+BLACKOUT_BRIGHTNESS_THRESHOLD = 25.0  # Mean pixel intensity threshold for blackout (0-255 range)
+LIVENESS_CHECK_INTERVAL = 3.0   # Time (in seconds) between capturing a new reference frame
+LIVENESS_ACTIVATION_TIME = 10.0 # Time (s) after startup before "FROZEN FEED ALERT" becomes active
+
 # Global variables
 cap = None
 prev_gray = None
@@ -42,6 +49,13 @@ frame_lock = None
 reposition_alert_active = False
 reposition_alert_shown = False  # Track if we've already shown the alert for this event
 reposition_alert_frames = 0
+
+# Liveness detection globals
+liveness_reference_frame = None
+liveness_reference_time = None
+liveness_startup_time = None
+liveness_is_frozen = False
+liveness_status_text = "INITIALIZING"
 
 # Audio logging globals
 LOG_AUDIO_SUBTITLES = False
@@ -123,6 +137,8 @@ def camera_thread():
     This runs in a separate thread to avoid blocking.
     """
     global prev_gray, current_frame, processed_frame, frame_lock, detection_data_cache
+    global liveness_reference_frame, liveness_reference_time, liveness_startup_time
+    global liveness_is_frozen, liveness_status_text
     
     ret, first_frame = cap.read()
     if not ret:
@@ -130,6 +146,9 @@ def camera_thread():
         return
     
     prev_gray = cv2.cvtColor(first_frame, cv2.COLOR_BGR2GRAY)
+    liveness_reference_frame = cv2.cvtColor(first_frame, cv2.COLOR_BGR2GRAY)
+    liveness_reference_time = time.time()
+    liveness_startup_time = time.time()  # Grace period tracker
     frame_count = 0
     
     while True:
@@ -142,6 +161,7 @@ def camera_thread():
         
         # Convert to grayscale
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        current_time = time.time()
         
         # --- RUN DETECTIONS ---
         is_blurred, blur_variance = tamper_detector.check_blur(gray, threshold=BLUR_THRESHOLD)
@@ -151,8 +171,45 @@ def camera_thread():
         )
         is_glare, glare_percentage, glare_histogram = tamper_detector.check_glare(frame, threshold_pct=10.0)
         
+        # --- LIVENESS DETECTION ---
+        diff_frame = cv2.absdiff(gray, liveness_reference_frame)
+        mean_diff = np.mean(diff_frame)
+        mean_brightness = np.mean(gray)
+        
+        # Check if grace period (10s startup) has passed
+        is_liveness_active = (current_time - liveness_startup_time) > LIVENESS_ACTIVATION_TIME
+        
+        # Determine liveness state
+        is_blackout = mean_brightness < BLACKOUT_BRIGHTNESS_THRESHOLD
+        is_major_tamper = mean_diff > MAJOR_TAMPER_THRESHOLD
+        is_frozen = False
+        
+        if is_liveness_active and mean_diff < LIVENESS_THRESHOLD:
+            is_frozen = True
+        
+        # Update liveness status text
+        if is_blackout:
+            liveness_status_text = "BLACKOUT DETECTED"
+        elif is_major_tamper:
+            liveness_status_text = "MAJOR TAMPER DETECTED"
+        elif is_frozen:
+            liveness_status_text = "FROZEN FEED ALERT"
+        elif not is_liveness_active:
+            time_left = LIVENESS_ACTIVATION_TIME - (current_time - liveness_startup_time)
+            liveness_status_text = f"INITIALIZING... ({time_left:.1f}s)"
+        else:
+            liveness_status_text = "LIVE"
+        
+        # Update reference frame if check interval has passed
+        if current_time - liveness_reference_time >= LIVENESS_CHECK_INTERVAL:
+            liveness_reference_frame = gray.copy()
+            liveness_reference_time = current_time
+        
+        # Store frozen state globally
+        liveness_is_frozen = is_frozen
+        
         # Determine if ANY tamper is detected (for audio logging trigger)
-        any_tamper_detected = is_blurred or is_shaken or is_glare
+        any_tamper_detected = is_blurred or is_shaken or is_glare or is_frozen or is_blackout or is_major_tamper
         
         # Manage repositioning alert state
         global reposition_alert_active, reposition_alert_shown, reposition_alert_frames
@@ -196,8 +253,13 @@ def camera_thread():
                 'histogram': glare_histogram.tolist() if glare_histogram is not None and hasattr(glare_histogram, 'tolist') else (list(glare_histogram) if glare_histogram else [])
             },
             'liveness': {
-                'frozen': False,
-                'value': 1
+                'frozen': bool(is_frozen),
+                'blackout': bool(is_blackout),
+                'major_tamper': bool(is_major_tamper),
+                'status': liveness_status_text,
+                'mean_diff': float(mean_diff),
+                'mean_brightness': float(mean_brightness),
+                'is_active': bool(is_liveness_active)
             }
         }
         

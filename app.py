@@ -17,9 +17,9 @@ from werkzeug.utils import secure_filename
 
 # Import backend modules
 from backend.database import aegis_db, save_glare_image, get_incident_description
-from backend.watermark_validator import validate_video_watermarks, validate_video_watermarks_basic
-from backend.pocketsphinx_recognizer import get_pocketsphinx_recognizer, is_pocketsphinx_available
+from backend.watermark_validator import validate_video
 from backend.watermark_embedder import get_watermark_embedder
+from backend.pocketsphinx_recognizer import get_pocketsphinx_recognizer, is_pocketsphinx_available
 
 # Try to import glare rescue functions, but make them optional
 try:
@@ -780,12 +780,14 @@ def validate_liveness_video():
             try:
                 video_start_timestamp = int(float(video_start_timestamp))
             except:
-                video_start_timestamp = None
+                video_start_timestamp = int(time.time())  # Default to current time
+        else:
+            video_start_timestamp = int(time.time())  # Default to current time
         
         # Validate watermarks
-        validation_result = validate_video_watermarks(file_path, video_start_timestamp)
+        validation_result = validate_video(file_path, video_start_timestamp)
         
-        if not validation_result.get('success', True):
+        if validation_result.get('overall_status') == 'ERROR':
             print(f"[LIVENESS] Validation failed: {validation_result.get('error')}")
         else:
             print(f"[LIVENESS] Validation complete - Status: {validation_result.get('overall_status')}")
@@ -795,10 +797,16 @@ def validate_liveness_video():
             incident_id = request.form.get('incident_id')
             incident_id = int(incident_id) if incident_id else None
             
+            # Convert results to frame_results dict for database
+            frame_results_dict = {}
+            for result in validation_result.get('results', []):
+                frame_key = f'second_{result["second"]}'
+                frame_results_dict[frame_key] = result
+            
             aegis_db.add_liveness_validation(
                 file_path,
                 validation_result.get('overall_status', 'UNKNOWN'),
-                validation_result.get('frame_results', {}),
+                frame_results_dict,
                 time.time(),
                 incident_id
             )

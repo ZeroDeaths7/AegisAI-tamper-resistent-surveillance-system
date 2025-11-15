@@ -1,213 +1,94 @@
 """
-Dynamic Watermark Embedder for AEGIS Live Feed
-Embeds HMAC-SHA256 based tokens into video frames for liveness detection
+RGB Watermark Embedder - Encodes HMAC tokens as RGB colors and embeds into frames
 """
-
-import cv2
-import numpy as np
-import time
 import hmac
 import hashlib
-from datetime import datetime
+import cv2
+import time
 import threading
 
-# Server secret key for HMAC generation
-SERVER_SECRET_KEY = b"YourUnbreakableWatermarkSecretKey12345"
+# Configuration
+SECRET_KEY = b"AegisSecureWatermarkKey2025"
+WATERMARK_SIZE = 40  # 40x40 pixel square
+PADDING = 10  # 10px from edges
 
-# Visibility settings
-VISIBILITY_FLIP_INTERVAL_SECONDS = 10
-
-
-def generate_hmac_token():
+def get_hmac_color(timestamp):
     """
-    Generates a unique 4-digit token based on HMAC-SHA256.
-    Changes every second, ensuring non-sequential jumps.
+    Generate RGB color from HMAC token based on timestamp.
     
+    Args:
+        timestamp: Unix timestamp (float or int)
+        
     Returns:
-        str: 4-digit token (0000-9999)
+        Tuple (R, G, B) with values 0-255
     """
-    current_time_seconds = int(time.time())
-    message = str(current_time_seconds).encode('utf-8')
+    # Convert timestamp to bytes
+    timestamp_bytes = str(int(timestamp)).encode('utf-8')
     
-    # Compute HMAC-SHA256
-    hmac_digest = hmac.new(
-        key=SERVER_SECRET_KEY,
-        msg=message,
-        digestmod=hashlib.sha256
-    ).hexdigest()
+    # Generate HMAC-SHA256
+    hmac_obj = hmac.new(SECRET_KEY, timestamp_bytes, hashlib.sha256)
+    hmac_digest = hmac_obj.digest()
     
-    # Truncate to last 4 hex digits and convert to 4-digit decimal
-    last_4_hex = hmac_digest[-4:]
-    token_int = int(last_4_hex, 16)
-    final_token = token_int % 10000
+    # Use first 3 bytes as RGB values
+    r = hmac_digest[0]
+    g = hmac_digest[1]
+    b = hmac_digest[2]
     
-    return f"{final_token:04d}"
+    return (int(r), int(g), int(b))
 
 
-def get_current_opacity():
+def embed_watermark(frame, timestamp):
     """
-    Determines current watermark opacity for adaptive visibility.
-    Alternates between high (1.0) and low (0.2) every 10 seconds.
-    
-    Returns:
-        float: Opacity multiplier (0.2 or 1.0)
-    """
-    current_time_seconds = int(time.time())
-    
-    if current_time_seconds % (VISIBILITY_FLIP_INTERVAL_SECONDS * 2) < VISIBILITY_FLIP_INTERVAL_SECONDS:
-        return 1.0  # High opacity
-    else:
-        return 0.2  # Low opacity
-
-
-def generate_watermark_text():
-    """
-    Creates the complete dynamic watermark signature.
-    Format: TST-H:<4-digit-token> | T:<timestamp>
-    
-    Returns:
-        str: Watermark text to embed
-    """
-    token = generate_hmac_token()
-    dt_now = datetime.now().strftime("%Y%m%d-%H%M%S")
-    
-    signature = f"TST-H:{token} | T:{dt_now}"
-    return signature
-
-
-def embed_watermark(frame, watermark_text=None, opacity_multiplier=None):
-    """
-    Embeds dynamic watermark onto video frame.
-    Includes semi-transparent background rectangle for contrast.
+    Embed RGB watermark into frame at bottom-right corner.
     
     Args:
         frame: OpenCV frame (BGR format)
-        watermark_text: Custom watermark text (auto-generated if None)
-        opacity_multiplier: Alpha value for visibility (auto-calculated if None)
-    
+        timestamp: Unix timestamp
+        
     Returns:
-        np.ndarray: Frame with embedded watermark
+        Frame with watermark embedded
     """
     if frame is None:
-        return None
+        return frame
     
-    # Auto-generate watermark text if not provided
-    if watermark_text is None:
-        watermark_text = generate_watermark_text()
+    height, width = frame.shape[:2]
     
-    # Auto-calculate opacity if not provided
-    if opacity_multiplier is None:
-        opacity_multiplier = get_current_opacity()
+    # Calculate watermark position (bottom-right corner with padding)
+    x_end = width - PADDING
+    x_start = x_end - WATERMARK_SIZE
+    y_end = height - PADDING
+    y_start = y_end - WATERMARK_SIZE
     
-    H, W = frame.shape[:2]
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.6
-    font_thickness = 2
+    # Get RGB color from timestamp
+    rgb_color = get_hmac_color(timestamp)
     
-    # Calculate text size
-    text_size = cv2.getTextSize(watermark_text, font, font_scale, font_thickness)[0]
-    text_width, text_height = text_size[0], text_size[1]
+    # OpenCV uses BGR, so convert RGB to BGR
+    bgr_color = (rgb_color[2], rgb_color[1], rgb_color[0])
     
-    padding = 10
-    text_x = W - text_width - padding
-    text_y = H - padding
-    
-    # Draw semi-transparent background rectangle
-    overlay = frame.copy()
-    rect_color = (0, 0, 0)
-    rect_alpha = 0.4 * opacity_multiplier
-    
-    rect_top_left_x = text_x - padding
-    rect_top_left_y = text_y - text_height - padding
-    rect_bottom_right_x = W
-    rect_bottom_right_y = H
-    
-    cv2.rectangle(
-        overlay,
-        (rect_top_left_x, rect_top_left_y),
-        (rect_bottom_right_x, rect_bottom_right_y),
-        rect_color,
-        -1
-    )
-    
-    cv2.addWeighted(overlay, rect_alpha, frame, 1 - rect_alpha, 0, frame)
-    
-    # Draw watermark text
-    text_opacity = opacity_multiplier
-    if text_opacity < 1.0:
-        text_color = (150, 150, 150)  # Gray when faint
-    else:
-        text_color = (0, 255, 255)  # Cyan when visible
-    
-    cv2.putText(
-        frame,
-        watermark_text,
-        (text_x, text_y),
-        font,
-        font_scale,
-        text_color,
-        font_thickness,
-        cv2.LINE_AA
-    )
+    # Draw filled rectangle
+    cv2.rectangle(frame, (x_start, y_start), (x_end, y_end), bgr_color, -1)
     
     return frame
 
 
 class WatermarkEmbedder:
-    """
-    Thread-safe watermark embedder for continuous frame processing.
-    Caches watermark text to ensure same token within a second.
-    """
-    
-    def __init__(self, server_secret_key=None):
-        """Initialize embedder with optional custom secret key."""
-        global SERVER_SECRET_KEY
-        if server_secret_key:
-            SERVER_SECRET_KEY = server_secret_key
-        
-        self.last_watermark_text = None
-        self.last_watermark_time = 0
-        self.lock = threading.Lock()
-    
-    def get_watermark_text(self):
-        """
-        Get cached watermark text or generate new one.
-        Ensures same token is used for all frames within 1 second.
-        
-        Returns:
-            str: Watermark text
-        """
-        with self.lock:
-            current_time = int(time.time())
-            
-            # Regenerate if time changed
-            if current_time != self.last_watermark_time:
-                self.last_watermark_text = generate_watermark_text()
-                self.last_watermark_time = current_time
-            
-            return self.last_watermark_text
+    """Simple watermark embedder that uses current timestamp."""
     
     def embed(self, frame):
-        """
-        Embed watermark into frame with cached text.
-        
-        Args:
-            frame: OpenCV frame
-        
-        Returns:
-            np.ndarray: Frame with watermark
-        """
-        if frame is None:
-            return None
-        
-        watermark_text = self.get_watermark_text()
-        opacity_multiplier = get_current_opacity()
-        
-        return embed_watermark(frame, watermark_text, opacity_multiplier)
+        """Embed watermark with current timestamp."""
+        return embed_watermark(frame, time.time())
 
 
-# Global singleton instance
+# Global singleton
 _embedder = None
+
+
+def get_watermark_embedder():
+    """Get or create the global watermark embedder."""
+    global _embedder
+    if _embedder is None:
+        _embedder = WatermarkEmbedder()
+    return _embedder
 _embedder_lock = threading.Lock()
 
 

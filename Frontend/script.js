@@ -707,8 +707,13 @@ function handleVideoUpload(file) {
 function displayValidationResults(validation) {
     const contentDiv = document.getElementById('validationContent');
     const status = validation.overall_status;
-    const statusIcon = status === 'PASS' ? '✓' : (status === 'FAIL' ? '✗' : '?');
-    const statusColor = status === 'PASS' ? 'pass' : (status === 'FAIL' ? 'fail' : 'unknown');
+    const statusIcon = status === 'LIVE' ? '✓' : (status === 'NOT_LIVE' ? '✗' : '?');
+    const statusColor = status === 'LIVE' ? 'pass' : (status === 'NOT_LIVE' ? 'fail' : 'unknown');
+    
+    // Handle both old and new result formats
+    const total = validation.total || validation.total_frames_checked || 0;
+    const matched = validation.matched || 0;
+    const percentage = validation.percentage || 0;
     
     let html = `
         <div class="validation-status ${statusColor}">
@@ -717,10 +722,46 @@ function displayValidationResults(validation) {
         </div>
         
         <div style="font-size: 12px; color: #888; margin-bottom: 15px;">
-            Frames checked: ${validation.total_frames_checked} | Tampered: ${validation.tampered_count}
+            Frames checked: ${total} | Matched: ${matched} | Match Rate: ${percentage.toFixed(1)}%
         </div>
     `;
     
+    // Display per-frame results with HMAC token comparisons
+    if (validation.results && validation.results.length > 0) {
+        html += `
+            <div style="margin-bottom: 15px;">
+                <div class="detail-label" style="color: #00E5FF; margin-bottom: 8px;">Frame-by-Frame Results (HMAC Token Validation)</div>
+                <div class="frame-results" style="max-height: 300px; overflow-y: auto;">
+        `;
+        
+        validation.results.forEach(result => {
+            const matchStatus = result.match ? 'pass' : 'fail';
+            const matchIcon = result.match ? '✓ MATCH' : '✗ MISMATCH';
+            const expectedHmac = result.expected_hmac || 'N/A';
+            const extractedHmac = result.extracted_hmac || 'None';
+            
+            html += `
+                <div class="frame-result-item ${matchStatus}">
+                    <div style="margin-bottom: 6px;">
+                        <span style="font-weight: bold;">Second ${result.second}</span> - <span style="font-weight: bold;">${matchIcon}</span>
+                    </div>
+                    <div style="font-size: 11px; margin: 4px 0;">
+                        <span style="color: #00E5FF;">Expected Token:</span> <code style="background: rgba(0,229,255,0.1); padding: 2px 4px; border-radius: 3px;">${expectedHmac}</code>
+                    </div>
+                    <div style="font-size: 11px; margin: 4px 0;">
+                        <span style="color: #FFB800;">Extracted Token:</span> <code style="background: rgba(255,184,0,0.1); padding: 2px 4px; border-radius: 3px;">${extractedHmac}</code>
+                    </div>
+                </div>
+            `;
+        });
+        
+        html += `
+                </div>
+            </div>
+        `;
+    }
+    
+    // Display old format if present (backward compatibility)
     if (validation.tampered_frames && validation.tampered_frames.length > 0) {
         html += `
             <div style="margin-bottom: 15px;">
@@ -733,15 +774,6 @@ function displayValidationResults(validation) {
                         </div>
                     `).join('')}
                 </div>
-            </div>
-        `;
-    }
-    
-    if (validation.frame_results && Object.keys(validation.frame_results).length > 0) {
-        const passFrames = Object.values(validation.frame_results).filter(f => f.status === 'PASS').length;
-        html += `
-            <div style="font-size: 11px; color: #888; padding: 10px; background: rgba(0, 229, 255, 0.05); border-radius: 4px;">
-                <strong>${passFrames}/${Object.keys(validation.frame_results).length}</strong> frames passed watermark validation
             </div>
         `;
     }

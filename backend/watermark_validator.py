@@ -1,340 +1,154 @@
 """
-Liveness Video Watermark Validation Module
-Extracts and validates HMAC watermark tokens from video frames.
+RGB Watermark Validator - Validates video watermarks and compares expected vs extracted colors
 """
-
 import cv2
 import hmac
 import hashlib
-import re
-import json
-from typing import Dict, List, Tuple
-import os
+from backend.watermark_extractor import extract_watermark_color, color_distance
 
-# Configuration - MUST MATCH dynamic_watermarker.py
-SERVER_SECRET_KEY = b"YourUnbreakableWatermarkSecretKey12345"
+# Configuration (must match embedder)
+SECRET_KEY = b"AegisSecureWatermarkKey2025"
+LIVE_THRESHOLD = 0.70  # 70% of frames must match to be LIVE
 
-
-def calculate_expected_hmac_token(timestamp_seconds):
+def get_expected_hmac_token(timestamp):
     """
-    Calculates the expected HMAC-SHA256 token for a given timestamp.
-    This matches the logic in dynamic_watermarker.py generate_hmac_token()
+    Calculate expected HMAC token for a given timestamp.
+    Uses the same algorithm as dynamic_watermarker.generate_hmac_token()
+    
+    Args:
+        timestamp: Unix timestamp (float or int)
+        
+    Returns:
+        HMAC token as 4-digit string (0000-9999)
     """
-    message = str(timestamp_seconds).encode('utf-8')
+    # Convert timestamp to bytes
+    timestamp_bytes = str(int(timestamp)).encode('utf-8')
     
-    hmac_digest = hmac.new(
-        key=SERVER_SECRET_KEY,
-        msg=message,
-        digestmod=hashlib.sha256
-    ).hexdigest()
+    # Generate HMAC-SHA256
+    hmac_obj = hmac.new(SECRET_KEY, timestamp_bytes, hashlib.sha256)
+    hmac_digest = hmac_obj.hexdigest()
     
-    # Truncate to last 4 hex chars and convert to 0000-9999
+    # Get last 4 hex characters and convert to 4-digit token (0000-9999)
     last_4_hex = hmac_digest[-4:]
     token_int = int(last_4_hex, 16)
     final_token = token_int % 10000
     
+    # Return as 4-digit string with leading zeros
     return f"{final_token:04d}"
 
 
-def extract_hmac_token_from_frame(frame):
+def validate_video(video_path, start_timestamp):
     """
-    Extracts the HMAC token from a video frame using OCR/regex.
-    Looks for pattern: TST-H:XXXX
+    Validate video watermarks by checking frames at 1-second intervals.
     
     Args:
-        frame: OpenCV frame (BGR)
-    
-    Returns:
-        Extracted token string (XXXX) or None if not found
-    """
-    try:
-        import pytesseract
-        from PIL import Image
-        import numpy as np
+        video_path: Path to video file
+        start_timestamp: Unix timestamp when recording started
         
-        # Get the region of interest (bottom-right corner where watermark is)
-        h, w = frame.shape[:2]
-        roi = frame[max(0, h-100):h, max(0, w-300):w]
-        
-        # Convert BGR to RGB for PIL
-        roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
-        pil_image = Image.fromarray(roi_rgb)
-        
-        # Use Tesseract to extract text
-        extracted_text = pytesseract.image_to_string(pil_image)
-        
-        # Look for TST-H:XXXX pattern
-        match = re.search(r'TST-H:(\d{4})', extracted_text)
-        if match:
-            return match.group(1)
-        
-        return None
-    
-    except ImportError:
-        # Fallback: simple regex pattern matching on frame text
-        # This is a basic approach that works if text is clear
-        return extract_hmac_token_fallback(frame)
-
-
-def extract_hmac_token_fallback(frame):
-    """
-    Fallback method to extract HMAC token from frame without OCR.
-    Uses template matching and contour detection.
-    """
-    try:
-        h, w = frame.shape[:2]
-        roi = frame[max(0, h-120):h, max(0, w-320):w]
-        
-        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        
-        # Apply threshold to isolate text
-        _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
-        
-        # Find contours
-        contours, _ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # This is a very basic fallback - in production, use pytesseract
-        # For now, return None to indicate OCR is needed
-        return None
-    
-    except Exception as e:
-        print(f"[WATERMARK] Fallback extraction failed: {e}")
-        return None
-
-
-def validate_video_watermarks(video_file_path, video_start_timestamp=None):
-    """
-    Validates watermarks in a video file by checking HMAC tokens at 1-second intervals.
-    
-    Args:
-        video_file_path: Path to the video file
-        video_start_timestamp: Unix timestamp when video recording started (if known)
-                              If not provided, uses video creation time or current time
-    
     Returns:
         Dict with validation results:
         {
-            'overall_status': 'PASS' or 'FAIL',
-            'tampered_frames': [list of problematic frame info],
-            'frame_results': {
-                'second_0': {'expected_token': 'XXXX', 'extracted_token': 'YYYY', 'status': 'PASS'},
-                'second_1': {...},
+            'overall_status': 'LIVE' or 'NOT_LIVE',
+            'results': [
+                {
+                    'second': 0,
+                    'timestamp': 1234567890,
+                    'expected_hmac': '1a2b3c4d5e6f7890',
+                    'extracted_hmac': '1a2b3c4d5e6f7890',
+                    'match': 1
+                },
                 ...
-            },
-            'total_frames_checked': int,
-            'tampered_count': int
+            ],
+            'matched': 5,
+            'total': 6,
+            'percentage': 83.3
         }
     """
-    if not os.path.exists(video_file_path):
-        return {
-            'overall_status': 'FAIL',
-            'error': f'Video file not found: {video_file_path}',
-            'frame_results': {},
-            'total_frames_checked': 0,
-            'tampered_count': 0,
-            'tampered_frames': []
-        }
-    
-    cap = cv2.VideoCapture(video_file_path)
+    cap = cv2.VideoCapture(video_path)
     
     if not cap.isOpened():
         return {
-            'overall_status': 'FAIL',
-            'error': f'Could not open video file: {video_file_path}',
-            'frame_results': {},
-            'total_frames_checked': 0,
-            'tampered_count': 0,
-            'tampered_frames': []
+            'overall_status': 'ERROR',
+            'error': f'Could not open video: {video_path}',
+            'results': []
         }
     
     fps = cap.get(cv2.CAP_PROP_FPS)
     if fps <= 0:
-        fps = 30.0
+        fps = 30
     
-    frame_interval = int(fps)  # Check every 1 second (fps frames)
-    
-    # Determine video start timestamp
-    if video_start_timestamp is None:
-        # Use file modification time as fallback
-        import time as time_module
-        video_start_timestamp = int(time_module.time())
-    
-    frame_results = {}
-    tampered_frames = []
+    frame_interval = int(fps)  # Check every 1 second
+    results = []
     frame_count = 0
-    checked_count = 0
-    tampered_count = 0
+    matched = 0
     
     try:
         while True:
             ret, frame = cap.read()
-            
             if not ret:
                 break
             
             # Check frame at 1-second intervals
             if frame_count % frame_interval == 0:
                 second_index = frame_count // frame_interval
-                expected_timestamp = video_start_timestamp + second_index
-                expected_token = calculate_expected_hmac_token(expected_timestamp)
+                expected_timestamp = start_timestamp + second_index
                 
-                # Try to extract token from frame
-                extracted_token = extract_hmac_token_from_frame(frame)
+                # Get expected HMAC token
+                expected_hmac = get_expected_hmac_token(expected_timestamp)
+                extracted_color = extract_watermark_color(frame)
                 
-                frame_key = f'second_{second_index}'
-                
-                if extracted_token is None:
-                    # Could not extract token - mark as suspicious
-                    status = 'UNKNOWN'
-                    tampered_count += 1
-                    frame_results[frame_key] = {
-                        'expected_token': expected_token,
-                        'extracted_token': None,
-                        'status': status,
-                        'timestamp': expected_timestamp,
-                        'note': 'Could not extract watermark from frame'
-                    }
-                    tampered_frames.append({
-                        'second': second_index,
-                        'status': status,
-                        'reason': 'Watermark extraction failed'
-                    })
-                
-                elif extracted_token == expected_token:
-                    # Token matches - PASS
-                    frame_results[frame_key] = {
-                        'expected_token': expected_token,
-                        'extracted_token': extracted_token,
-                        'status': 'PASS',
-                        'timestamp': expected_timestamp
-                    }
-                
+                # Convert extracted RGB to HMAC token representation
+                # RGB comes from first 3 bytes of HMAC, so reconstruct the token
+                if extracted_color is not None:
+                    # Build hex string from RGB bytes: RRGGBB + 00
+                    hex_from_rgb = f"{extracted_color[0]:02x}{extracted_color[1]:02x}{extracted_color[2]:02x}00"
+                    # Take last 4 hex chars and convert to 4-digit token
+                    last_4_hex = hex_from_rgb[-4:]
+                    token_int = int(last_4_hex, 16)
+                    extracted_hmac = f"{token_int % 10000:04d}"
+                    # Exact match only - no tolerance
+                    match = extracted_hmac == expected_hmac
+                    if match:
+                        matched += 1
                 else:
-                    # Token mismatch - FAIL (fake feed detected)
-                    status = 'FAIL'
-                    tampered_count += 1
-                    frame_results[frame_key] = {
-                        'expected_token': expected_token,
-                        'extracted_token': extracted_token,
-                        'status': status,
-                        'timestamp': expected_timestamp,
-                        'note': 'Watermark token mismatch - possible replay attack'
-                    }
-                    tampered_frames.append({
-                        'second': second_index,
-                        'status': status,
-                        'expected_token': expected_token,
-                        'extracted_token': extracted_token,
-                        'reason': 'Token mismatch detected'
-                    })
+                    extracted_hmac = "None"
+                    match = False
                 
-                checked_count += 1
-            
-            frame_count += 1
-    
-    except Exception as e:
-        print(f"[WATERMARK] Error processing video: {e}")
-        return {
-            'overall_status': 'FAIL',
-            'error': str(e),
-            'frame_results': frame_results,
-            'total_frames_checked': checked_count,
-            'tampered_count': tampered_count,
-            'tampered_frames': tampered_frames
-        }
-    
-    finally:
-        cap.release()
-    
-    # Determine overall status
-    overall_status = 'PASS' if tampered_count == 0 else 'FAIL'
-    
-    return {
-        'overall_status': overall_status,
-        'frame_results': frame_results,
-        'total_frames_checked': checked_count,
-        'tampered_count': tampered_count,
-        'tampered_frames': tampered_frames,
-        'success': True
-    }
-
-
-def validate_video_watermarks_basic(video_file_path, video_start_timestamp=None):
-    """
-    Basic watermark validation that works without OCR.
-    Checks if watermark presence is consistent throughout video.
-    """
-    if not os.path.exists(video_file_path):
-        return {
-            'overall_status': 'FAIL',
-            'error': f'Video file not found: {video_file_path}',
-            'frame_results': {},
-            'total_frames_checked': 0
-        }
-    
-    cap = cv2.VideoCapture(video_file_path)
-    
-    if not cap.isOpened():
-        return {
-            'overall_status': 'FAIL',
-            'error': f'Could not open video file: {video_file_path}',
-            'frame_results': {},
-            'total_frames_checked': 0
-        }
-    
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if fps <= 0:
-        fps = 30.0
-    
-    frame_interval = int(fps)
-    frame_results = {}
-    frame_count = 0
-    checked_count = 0
-    
-    try:
-        while True:
-            ret, frame = cap.read()
-            
-            if not ret:
-                break
-            
-            if frame_count % frame_interval == 0:
-                second_index = frame_count // frame_interval
-                frame_key = f'second_{second_index}'
+                results.append({
+                    'second': second_index,
+                    'timestamp': int(expected_timestamp),
+                    'expected_hmac': expected_hmac,
+                    'extracted_hmac': extracted_hmac,
+                    'match': int(match)  # Convert bool to int for JSON (0 or 1)
+                })
                 
-                # Basic check: look for white text in bottom-right corner
-                h, w = frame.shape[:2]
-                roi = frame[max(0, h-120):h, max(0, w-320):w]
-                
-                # Check if there's significant white content (watermark)
-                gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                white_pixels = (gray > 200).sum()
-                white_ratio = white_pixels / (roi.shape[0] * roi.shape[1])
-                
-                has_watermark = white_ratio > 0.01  # At least 1% white pixels
-                
-                frame_results[frame_key] = {
-                    'has_watermark': has_watermark,
-                    'white_pixel_ratio': float(white_ratio),
-                    'status': 'PASS' if has_watermark else 'UNKNOWN'
-                }
-                
-                checked_count += 1
+                # Print for debugging
+                match_icon = '✓' if match else '✗'
+                print(f"[LIVENESS] Second {second_index}: Expected {expected_hmac} | Extracted {extracted_hmac} | {match_icon}")
             
             frame_count += 1
     
     finally:
         cap.release()
     
-    # Check consistency
-    has_watermark_frames = [v for v in frame_results.values() if v.get('has_watermark', False)]
-    watermark_consistency = len(has_watermark_frames) / max(1, len(frame_results))
+    # Calculate overall status
+    total = len(results)
+    if total == 0:
+        return {
+            'overall_status': 'ERROR',
+            'error': 'No frames to validate',
+            'results': []
+        }
     
-    overall_status = 'PASS' if watermark_consistency > 0.8 else 'SUSPICIOUS'
+    percentage = (matched / total) * 100
+    overall_status = 'LIVE' if (matched / total) >= LIVE_THRESHOLD else 'NOT_LIVE'
+    
+    print(f"[LIVENESS] Summary: {matched}/{total} frames matched ({percentage:.1f}%) - Status: {overall_status}")
     
     return {
         'overall_status': overall_status,
-        'frame_results': frame_results,
-        'total_frames_checked': checked_count,
-        'watermark_consistency': watermark_consistency
+        'results': results,
+        'matched': matched,
+        'total': total,
+        'percentage': percentage
     }

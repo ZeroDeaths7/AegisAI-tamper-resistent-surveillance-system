@@ -911,7 +911,10 @@ body {
 
 .metric-indicator-compact {
     font-size: 12px;
-    color: #888;
+    color: #00E5FF;
+    font-weight: bold;
+    transition: color 0.3s ease, text-shadow 0.3s ease;
+    text-shadow: 0 0 8px rgba(0, 229, 255, 0.6);
 }
 
 /* ============================================================================

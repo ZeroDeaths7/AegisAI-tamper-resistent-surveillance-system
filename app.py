@@ -17,20 +17,26 @@ from werkzeug.utils import secure_filename
 
 # Import backend modules
 from backend.database import aegis_db, save_glare_image, get_incident_description
-from backend.watermark_validator import validate_video_watermarks, validate_video_watermarks_basic
+from backend.watermark_validator import validate_video
+from backend.watermark_embedder import get_watermark_embedder
+from backend.pocketsphinx_recognizer import get_pocketsphinx_recognizer, is_pocketsphinx_available
 
 # Try to import glare rescue functions, but make them optional
 try:
-    from Sensor.glare_rescue import apply_msr_hsv, apply_unsharp_mask, get_image_viability_stats
+    # <--- FIX 1: Only import functions that exist in your new file ---
+    from Sensor.glare_rescue import (
+        apply_unsharp_mask, 
+        get_image_viability_stats
+    )
     GLARE_RESCUE_AVAILABLE = True
 except ImportError as e:
     print(f"Warning: Glare rescue functions not available: {e}")
     GLARE_RESCUE_AVAILABLE = False
     # Dummy functions
-    def apply_msr_hsv(frame):
-        return frame
     def apply_unsharp_mask(frame, amount=1.0):
         return frame
+    def get_image_viability_stats(frame, **kwargs): return False, 0, 0, 0, None, None
+
 
 # ============================================================================
 # INITIALIZATION
@@ -50,8 +56,14 @@ REPOSITION_THRESHOLD = 10.0  # Threshold for directional shift magnitude - reduc
 CAMERA_INDEX = 0
 BLUR_FIX_ENABLED = True
 BLUR_FIX_STRENGTH = 5
-GLARE_RESCUE_ENABLED = True  # Disabled for now - enable after testing
-GLARE_RESCUE_MODE = 'MSR'  # Options: 'CLAHE', 'MSR'
+GLARE_RESCUE_ENABLED = True  # This is controlled by sensor_config
+GLARE_RESCUE_MODE = 'MSR'  # This is controlled by sensor_config
+
+# <--- FIX 2: Use your tuned CLAHE parameters ---
+if GLARE_RESCUE_AVAILABLE:
+    clahe = cv2.createCLAHE(clipLimit=16.0, tileGridSize=(4, 4))
+else:
+    clahe = None
 
 # Sensor enable/disable configuration - all enabled by default
 sensor_config = {
@@ -62,7 +74,8 @@ sensor_config = {
     'reposition': True,     # Reposition detection
     'blur_fix': True,       # Blur correction
     'glare_rescue': True,   # Glare rescue
-    'audio_alerts': True    # Audio alerts/logging
+    'audio_alerts': True,    # Audio alerts/logging
+    'glare_rescue_mode': 'CLAHE' # <--- NEW: Add glare_rescue_mode here
 }
 sensor_config_lock = threading.Lock()  # Thread-safe config updates
 
@@ -149,11 +162,22 @@ def record_detection(detection_type, timestamp):
 def audio_logging_thread():
     """
     Audio logging thread that continuously listens for speech when triggered.
+    Uses PocketSphinx for fast, uncensored, offline speech recognition.
+    Falls back to Google Speech Recognition if PocketSphinx unavailable.
     Runs in a separate daemon thread and sends recognized speech to the frontend.
     """
     global LOG_AUDIO_SUBTITLES
     
-    r = speech_recognition.Recognizer()
+    # Try to use PocketSphinx first (fast, uncensored, offline)
+    ps_recognizer = get_pocketsphinx_recognizer()
+    use_pocketsphinx = is_pocketsphinx_available()
+    
+    if use_pocketsphinx:
+        print("[AUDIO] ✓ Using PocketSphinx for speech recognition (fast, uncensored)")
+    else:
+        print("[AUDIO] ⚠ PocketSphinx not available, falling back to Google API")
+        r = speech_recognition.Recognizer()
+    
     print("[AUDIO] Audio logger thread started - waiting for tamper detection...")
     
     while True:
@@ -163,15 +187,33 @@ def audio_logging_thread():
         
         if should_log:
             try:
-                with speech_recognition.Microphone() as source:
-                    print("[AUDIO] Listening for speech...")
-                    audio = r.listen(source, timeout=3, phrase_time_limit=5)
-                    print("[AUDIO] Audio received, recognizing...")
+                if use_pocketsphinx:
+                    # Use PocketSphinx (fast, uncensored, offline)
+                    text = ps_recognizer.listen_and_recognize(timeout_seconds=1.5)
+                else:
+                    # Fallback to Google Speech Recognition
+                    try:
+                        with speech_recognition.Microphone() as source:
+                            print("[AUDIO] Listening for speech...")
+                            audio = r.listen(source, timeout=1.5, phrase_time_limit=3)
+                        
+                        try:
+                            text = r.recognize_google(audio)
+                            print(f"[AUDIO] ✓ Recognized (Google): {text}")
+                        except speech_recognition.UnknownValueError:
+                            print("[AUDIO] Could not understand audio")
+                            text = ""
+                        except speech_recognition.RequestError as e:
+                            print(f"[AUDIO] API Error: {e}")
+                            text = ""
+                    except speech_recognition.WaitTimeoutError:
+                        print("[AUDIO] No speech detected (timeout)")
+                        text = ""
+                    except Exception as e:
+                        print(f"[AUDIO] Microphone error: {e}")
+                        text = ""
                 
-                try:
-                    text = r.recognize_google(audio)
-                    print(f"[AUDIO] Recognized speech: {text}")
-                    
+                if text:
                     # Save audio log to database
                     audio_timestamp = time.time()
                     try:
@@ -191,19 +233,11 @@ def audio_logging_thread():
                             print(f"[AUDIO] ✓ Subtitle emitted: {text}")
                     except Exception as e:
                         print(f"[AUDIO] ✗ Error emitting subtitle: {e}")
-                except speech_recognition.UnknownValueError:
-                    print("[AUDIO] Could not understand audio")
-                except speech_recognition.RequestError as e:
-                    print(f"[AUDIO] API Error: {e}")
                 
-            except speech_recognition.WaitTimeoutError:
-                print("[AUDIO] No speech detected (timeout)")
-            except speech_recognition.MicrophoneError as e:
-                print(f"[AUDIO] Microphone error: {e}")
             except Exception as e:
                 print(f"[AUDIO] ✗ Error: {e}")
         else:
-            time.sleep(1)  # Sleep when not logging
+            time.sleep(0.5)  # Sleep when not logging
 
 def camera_thread():
     """
@@ -212,7 +246,7 @@ def camera_thread():
     """
     global prev_gray, current_frame, processed_frame, frame_lock, detection_data_cache
     global liveness_reference_frame, liveness_reference_time, liveness_startup_time
-    global liveness_is_frozen, liveness_status_text
+    global liveness_is_frozen, liveness_status_text, clahe
     
     print("[CAMERA] Camera thread starting...")
     
@@ -254,7 +288,21 @@ def camera_thread():
         is_repositioned, shift_magnitude, shift_x, shift_y = tamper_detector.detect_camera_reposition(
             gray, prev_gray, threshold_shift=REPOSITION_THRESHOLD
         )
-        is_glare, glare_percentage, glare_histogram = tamper_detector.check_glare(frame, threshold_pct=10.0)
+        
+        # <--- FIX 3: Replace old glare check with the robust one ---
+        # is_glare, glare_percentage, glare_histogram = tamper_detector.check_glare(frame, threshold_pct=10.0) # <--- DELETED
+        
+        # Read sensor configuration (thread-safe)
+        with sensor_config_lock:
+            sensor_enabled = sensor_config.copy()
+
+        if GLARE_RESCUE_AVAILABLE and sensor_enabled['glare']:
+            # Use your tuned thresholds
+            is_glare, dark_pct, mid_pct, bright_pct, hist_for_plot, _ = get_image_viability_stats(
+                frame, dark_thresh=50, bright_thresh=252
+            )
+        else:
+            is_glare, dark_pct, mid_pct, bright_pct, hist_for_plot = False, 0.0, 100.0, 0.0, None
         
         # --- LIVENESS DETECTION ---
         diff_frame = cv2.absdiff(gray, liveness_reference_frame)
@@ -292,10 +340,6 @@ def camera_thread():
         
         # Store frozen state globally
         liveness_is_frozen = is_frozen
-        
-        # Read sensor configuration (thread-safe)
-        with sensor_config_lock:
-            sensor_enabled = sensor_config.copy()
         
         # Respect sensor configuration - disable detections if sensor is disabled
         if not sensor_enabled['blur']:
@@ -348,7 +392,7 @@ def camera_thread():
             # Always keep alert inactive when motion isn't detected
             reposition_alert_active = False
         
-        # Prepare detection data for frontend
+        # <--- FIX 4: Populate detection_data with the NEW glare stats ---
         detection_data = {
             'blur': {
                 'detected': bool(is_blurred),
@@ -367,8 +411,10 @@ def camera_thread():
             },
             'glare': {
                 'detected': bool(is_glare),
-                'percentage': float(glare_percentage),
-                'histogram': glare_histogram.tolist() if glare_histogram is not None and hasattr(glare_histogram, 'tolist') else (list(glare_histogram) if glare_histogram else [])
+                'dark_pct': float(dark_pct),
+                'mid_pct': float(mid_pct),
+                'bright_pct': float(bright_pct),
+                'histogram': hist_for_plot.tolist() if hist_for_plot is not None else []
             },
             'liveness': {
                 'frozen': bool(is_frozen),
@@ -416,64 +462,85 @@ def camera_thread():
         # Cache detection data
         detection_data_cache = detection_data
         
-        # Emit detection update to all connected clients
-        try:
-            with app.app_context():
-                socketio.emit('detection_update', detection_data, namespace='/', skip_sid=None)
-            if frame_count % 30 == 0:
-                print(f"Emitted detection data: Blur={blur_variance:.2f}, Shake={shake_magnitude:.2f}, Glare={glare_percentage:.2f}%")
-        except Exception as e:
-            print(f"Error emitting detection data: {e}")
+        # Emit detection update to all connected clients (every 3 frames to reduce jank)
+        if frame_count % 3 == 0:
+            try:
+                with app.app_context():
+                    socketio.emit('detection_update', detection_data, namespace='/', skip_sid=None)
+                if frame_count % 30 == 0:
+                    print(f"Emitted detection data: Blur={blur_variance:.2f}, Shake={shake_magnitude:.2f}, Dark%={dark_pct:.1f}")
+            except Exception as e:
+                print(f"Error emitting detection data: {e}")
         
         # --- GLARE RESCUE (Applied FIRST, before blur fixing) ---
         frame_for_processing = frame.copy()  # Start with original frame
-        if is_glare and GLARE_RESCUE_ENABLED and sensor_enabled['glare_rescue']:
+        
+        # <--- FIX 5: Replaced rescue block with your tuned CLAHE pipeline ---
+        if is_glare and sensor_enabled['glare_rescue'] and clahe is not None:
             try:
-                print(f"[GLARE] Applying glare rescue (mode: {GLARE_RESCUE_MODE})...")
-                if GLARE_RESCUE_MODE == 'MSR':
-                    # MSR (Multi-Scale Retinex) in HSV space - better for color preservation
-                    frame_for_processing = apply_msr_hsv(frame_for_processing)
-                else:
-                    # CLAHE + Unsharp mask - proven method
-                    lab_frame = cv2.cvtColor(frame_for_processing, cv2.COLOR_BGR2LAB)
+                with sensor_config_lock:
+                    current_mode = sensor_config.get('glare_rescue_mode', 'CLAHE')
+                print(f"[GLARE] Applying glare rescue (mode: {current_mode})...")
+
+                if current_mode == 'CLAHE':
+                    # --- 1. CLAHE Rescue ---
+                    lab_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
                     l, a, b = cv2.split(lab_frame)
-                    clahe = cv2.createCLAHE(clipLimit=12.0, tileGridSize=(4, 4))
-                    l_clahe = clahe.apply(l)
+                    l_clahe = clahe.apply(l) # Use global clahe object
                     enhanced_lab_frame = cv2.merge((l_clahe, a, b))
-                    frame_for_processing = cv2.cvtColor(enhanced_lab_frame, cv2.COLOR_LAB2BGR)
-                    frame_for_processing = apply_unsharp_mask(frame_for_processing, amount=1.0)
-                print(f"[GLARE] Rescue applied successfully!")
+                    clahe_rescued_frame = cv2.cvtColor(enhanced_lab_frame, cv2.COLOR_LAB2BGR)
+                    
+                    # --- 2. Sharpening ---
+                    processed_frame_clahe = apply_unsharp_mask(clahe_rescued_frame, amount=1.0)
+                    
+                    # --- 3. TAME HIGHLIGHTS (Your Hack) ---
+                    gray_raw = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    ret, mask = cv2.threshold(gray_raw, 252, 255, cv2.THRESH_BINARY)
+                    # Set those pixels to a neutral gray
+                    processed_frame_clahe[mask > 0] = (150, 150, 150) 
+                    
+                    frame_for_processing = processed_frame_clahe # Set as final frame
+                    print(f"[GLARE] CLAHE + Tame rescue applied successfully!")
+
+                elif current_mode == 'MSR':
+                    # --- MSR Rescue (DITCHED) ---
+                    print(f"[GLARE] MSR mode selected, but not applying (as requested).")
+                    frame_for_processing = frame.copy() # Just pass the raw frame
                 
                 # Save glare image to storage and database
                 try:
-                    file_path = save_glare_image(frame_for_processing, glare_percentage, current_time)
-                    aegis_db.add_glare_image(file_path, glare_percentage, current_time, current_incident_id)
+                    file_path = save_glare_image(frame_for_processing, dark_pct, current_time) # Use dark_pct
+                    aegis_db.add_glare_image(file_path, dark_pct, current_time, current_incident_id)
                     print(f"[GLARE] ✓ Rescued image saved: {file_path}")
                 except Exception as e:
                     print(f"[GLARE] ✗ Error saving glare image: {e}")
-                    
+                        
             except Exception as e:
                 print(f"[GLARE] Rescue error: {e}")
                 frame_for_processing = frame.copy()
         
         # Create processed frame with blur fixing (applied AFTER glare rescue)
-        if BLUR_FIX_ENABLED and sensor_enabled['blur_fix']:
-            # Always apply unsharp masking, but dynamically adjust strength based on blur variance
-            # Lower variance = more blurry = higher strength
-            # Variance range: typically 0-300+
-            # Map to strength range: 5.0 to 8.5 (higher base for inherently blurry camera)
+        if sensor_enabled['blur_fix']:
+            # Always apply unsharp masking, but dynamically adjust strength
             if blur_variance < 50:
                 dynamic_strength = 8.5  # Very blurry - maximum sharpening
             elif blur_variance < 100:
                 dynamic_strength = 3 + (100 - blur_variance) / 8  # Scale between 5.0-8.5
             else:
-                dynamic_strength = max(3, 8.5 - (blur_variance - 100) / 40)  # Scale down, but keep at 5.0 minimum
+                dynamic_strength = max(3, 8.5 - (blur_variance - 100) / 40)  # Scale down
             
-            # Apply unsharp masking with dynamic strength to the glare-rescued frame
+            # Apply unsharp masking with dynamic strength
             processed_frame_final = fix_blur_unsharp_mask(frame_for_processing, kernel_size=5, sigma=1.0, strength=dynamic_strength)
         else:
             # Blur fix disabled, use glare-rescued frame as-is
             processed_frame_final = frame_for_processing
+        
+        # --- EMBED WATERMARK ON PROCESSED FRAME ---
+        try:
+            watermark_embedder = get_watermark_embedder()
+            processed_frame_final = watermark_embedder.embed(processed_frame_final)
+        except Exception as e:
+            print(f"[WATERMARK] Error embedding watermark: {e}")
         
         # Update previous frame
         prev_gray = gray
@@ -481,7 +548,7 @@ def camera_thread():
         # Store frames for streaming
         with frame_lock:
             current_frame = frame.copy()  # Raw unmodified frame
-            processed_frame = processed_frame_final.copy()  # Frame with glare rescue + blur fix applied
+            processed_frame = processed_frame_final.copy()  # Frame with glare rescue + blur fix + watermark
         
         # Small delay to prevent CPU overload
         if frame_count % 10 == 0:
@@ -713,12 +780,14 @@ def validate_liveness_video():
             try:
                 video_start_timestamp = int(float(video_start_timestamp))
             except:
-                video_start_timestamp = None
+                video_start_timestamp = int(time.time())  # Default to current time
+        else:
+            video_start_timestamp = int(time.time())  # Default to current time
         
         # Validate watermarks
-        validation_result = validate_video_watermarks(file_path, video_start_timestamp)
+        validation_result = validate_video(file_path, video_start_timestamp)
         
-        if not validation_result.get('success', True):
+        if validation_result.get('overall_status') == 'ERROR':
             print(f"[LIVENESS] Validation failed: {validation_result.get('error')}")
         else:
             print(f"[LIVENESS] Validation complete - Status: {validation_result.get('overall_status')}")
@@ -728,10 +797,16 @@ def validate_liveness_video():
             incident_id = request.form.get('incident_id')
             incident_id = int(incident_id) if incident_id else None
             
+            # Convert results to frame_results dict for database
+            frame_results_dict = {}
+            for result in validation_result.get('results', []):
+                frame_key = f'second_{result["second"]}'
+                frame_results_dict[frame_key] = result
+            
             aegis_db.add_liveness_validation(
                 file_path,
                 validation_result.get('overall_status', 'UNKNOWN'),
-                validation_result.get('frame_results', {}),
+                frame_results_dict,
                 time.time(),
                 incident_id
             )
@@ -761,6 +836,9 @@ def handle_connect():
     """Handle client connection."""
     print("Client connected")
     emit('status_update', {'status': 'healthy', 'message': 'Connected to Aegis server'})
+    # Send current state on connect
+    with sensor_config_lock:
+        emit('sensor_states', sensor_config)
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -798,9 +876,27 @@ def handle_set_sensor_enabled(data):
         with sensor_config_lock:
             sensor_config[sensor] = enabled
         print(f"Sensor '{sensor}' set to {enabled}")
-        emit('status_update', {'status': 'healthy', 'message': f'{sensor} toggled to {enabled}'})
+        # Broadcast sensor state update to all connected clients
+        emit('status_update', {'status': 'healthy', 'message': f'{sensor} toggled to {enabled}'}, broadcast=True)
+        emit('sensor_states', sensor_config, broadcast=True) # Send update to all clients
     else:
         print(f"Warning: Unknown sensor '{sensor}'")
+
+# <--- NEW: Add handler for glare_rescue_mode ---
+@socketio.on('set_glare_mode')
+def handle_set_glare_mode(data):
+    """Handle glare rescue mode toggle request from frontend."""
+    mode = data.get('mode')
+    
+    if mode in ['CLAHE', 'MSR']:
+        with sensor_config_lock:
+            sensor_config['glare_rescue_mode'] = mode
+        print(f"Glare Rescue Mode set to {mode}")
+        # Broadcast to all connected clients
+        emit('status_update', {'status': 'healthy', 'message': f'Glare Mode set to {mode}'}, broadcast=True)
+        emit('sensor_states', sensor_config, broadcast=True) # Send updated config back
+    else:
+        print(f"Warning: Unknown glare mode '{mode}'")
 
 # ============================================================================
 # STARTUP AND SHUTDOWN
@@ -813,6 +909,8 @@ def startup():
     print("=" * 60)
     print(f"Blur Threshold: {BLUR_THRESHOLD}")
     print(f"Shake Threshold: {SHAKE_THRESHOLD}")
+    print("✓ Dynamic Watermarking: ENABLED")
+    print("✓ PocketSphinx Speech Recognition: READY")
     print("-" * 60)
     
     if not initialize_camera():

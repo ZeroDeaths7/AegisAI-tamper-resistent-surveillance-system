@@ -122,39 +122,8 @@ def camera_thread():
         except Exception as e:
             print(f"Error emitting detection data: {e}")
         
-        # Create processed frame with detection text
+        # Create processed frame (no text overlays - metrics shown in dashboard below)
         frame_with_text = frame.copy()
-        
-        # Blur status with color
-        blur_status = "BLURRY" if is_blurred else "SHARP"
-        blur_color = (0, 0, 255) if is_blurred else (0, 255, 0)  # Red or Green
-        
-        # Shake status with color
-        shake_status = "SHAKE" if is_shaken else "STABLE"
-        shake_color = (0, 255, 255) if not is_shaken else (0, 0, 255)  # Bright Yellow or Red
-        
-        # Glare status with color
-        glare_status = "GLARE" if is_glare else "OK"
-        glare_color = (0, 0, 255) if is_glare else (0, 255, 0)  # Red or Green
-        
-        # Add text to the processed frame
-        cv2.putText(frame_with_text, f"Blur: {blur_status}",
-                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, blur_color, 2)
-        
-        cv2.putText(frame_with_text, f"Shake: {shake_status}",
-                    (300, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, shake_color, 2)
-        
-        cv2.putText(frame_with_text, f"Glare: {glare_status}",
-                    (500, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, glare_color, 2)
-        
-        cv2.putText(frame_with_text, f"Blur Variance: {blur_variance:.2f} (Th: {BLUR_THRESHOLD:.0f})",
-                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        
-        cv2.putText(frame_with_text, f"Shake Magnitude: {shake_magnitude:.2f} (Th: {SHAKE_THRESHOLD:.1f})",
-                    (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        
-        cv2.putText(frame_with_text, f"Glare: {glare_percentage:.2f}% (Th: 10.0%)",
-                    (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         
         # Update previous frame
         prev_gray = gray

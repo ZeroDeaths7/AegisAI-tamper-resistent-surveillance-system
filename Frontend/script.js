@@ -25,27 +25,38 @@ const shakeIndicator = document.getElementById('shakeIndicator');
 const glareIndicator = document.getElementById('glareIndicator');
 const livenessIndicator = document.getElementById('livenessIndicator');
 
+const glareHistogramContainer = document.getElementById('glareHistogram');
+
 // ============================================================================
 // HISTOGRAM VISUALIZATION
 // ============================================================================
 
 /**
- * Update and display the glare histogram
+ * Update and display the glare histogram visually
  */
-function updateGlareHistogram(histogramData) {
-    // Create a simple text-based histogram visualization
-    let histogramText = '';
-    const maxValue = Math.max(...histogramData);
+function updateGlareHistogram(histogramData, isAlert = false) {
+    // Clear previous bars
+    glareHistogramContainer.innerHTML = '';
     
-    for (let i = 0; i < histogramData.length; i++) {
-        const barLength = Math.round((histogramData[i] / maxValue) * 20);
-        const bar = '█'.repeat(barLength);
-        const intensity = Math.round((i / histogramData.length) * 255);
-        histogramText += `${intensity.toString().padStart(3)}: ${bar}\n`;
+    if (!histogramData || histogramData.length === 0) {
+        glareHistogramContainer.innerHTML = '<div style="width: 100%; text-align: center; color: #888;">No data</div>';
+        return;
     }
     
-    // Log to console for debugging
-    console.log('Glare Histogram:\n' + histogramText);
+    // Find max value for scaling
+    const maxValue = Math.max(...histogramData);
+    
+    // Create bars for each histogram bucket
+    for (let i = 0; i < histogramData.length; i++) {
+        const bar = document.createElement('div');
+        bar.className = `bar ${isAlert ? 'alert' : ''}`;
+        
+        // Scale height proportionally (min 2px to be visible)
+        const heightPercent = (histogramData[i] / maxValue) * 100;
+        bar.style.height = `${Math.max(2, heightPercent)}%`;
+        
+        glareHistogramContainer.appendChild(bar);
+    }
 }
 
 // ============================================================================
@@ -204,17 +215,22 @@ socket.on('detection_update', (data) => {
 
     if (data.glare) {
         const glareStatus = data.glare.detected ? 'alert' : 'secure';
-        const glarePercentage = data.glare.percentage || 0;
-        updateMetric('glare', glarePercentage.toFixed(2), glareStatus);
         
-        // Store histogram data for visualization
+        // Show percentage value
+        glareValue.textContent = data.glare.percentage ? data.glare.percentage.toFixed(1) + '%' : '-';
+        
+        // Update histogram visualization
         if (data.glare.histogram) {
             systemState.metrics.glare.histogram = data.glare.histogram;
-            updateGlareHistogram(data.glare.histogram);
+            updateGlareHistogram(data.glare.histogram, data.glare.detected);
         }
+        
+        // Update indicator
+        glareIndicator.classList.remove('secure', 'alert', 'warning');
+        glareIndicator.classList.add(glareStatus);
 
         if (data.glare.detected) {
-            triggerAlert('GLARE', `Critical Threat: Glare Detected (${glarePercentage.toFixed(1)}%)!`);
+            triggerAlert('GLARE', `Critical Threat: Glare Detected (${data.glare.percentage.toFixed(1)}%)!`);
         }
     }
 

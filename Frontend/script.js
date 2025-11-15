@@ -122,6 +122,33 @@ function updateMetric(metricName, value, status = 'secure') {
 
     indicatorElement.classList.remove('secure', 'alert', 'warning');
     indicatorElement.classList.add(status);
+    
+    // Apply dynamic color to indicator based on value and metric type
+    if (typeof value === 'number') {
+        let colorRGB = { r: 76, g: 229, b: 255 }; // Cyan default
+        
+        if (metricName === 'blur') {
+            // Blur: 0-150 range. Red at 150+
+            const ratio = Math.min(1, value / 150);
+            colorRGB = {
+                r: Math.round(255 * ratio),
+                g: Math.round(229 * (1 - ratio)),
+                b: Math.round(255 * (1 - ratio))
+            };
+        } else if (metricName === 'shake') {
+            // Shake: 0-20 range. Red at 20+
+            const ratio = Math.min(1, value / 20);
+            colorRGB = {
+                r: Math.round(255 * ratio),
+                g: Math.round(229 * (1 - ratio)),
+                b: Math.round(255 * (1 - ratio))
+            };
+        }
+        
+        const color = `rgb(${colorRGB.r}, ${colorRGB.g}, ${colorRGB.b})`;
+        indicatorElement.style.color = color;
+        indicatorElement.style.textShadow = `0 0 ${Math.max(5, value * 0.1)}px ${color}`;
+    }
 
     systemState.metrics[metricName] = { value, status };
 }
@@ -241,23 +268,34 @@ socket.on('detection_update', (data) => {
     }
 
     if (data.glare) {
+        // Calculate glare percentage from brightness data (bright_pct is the glare metric)
+        const glarePercentage = data.glare.bright_pct || 0;
         const glareStatus = data.glare.detected ? 'alert' : 'secure';
         
-        // Show percentage value
-        glareValue.textContent = data.glare.percentage ? data.glare.percentage.toFixed(1) + '%' : '-';
+        // Show the glare percentage value
+        glareValue.textContent = glarePercentage.toFixed(1) + '%';
         
-        // Update histogram visualization
-        if (data.glare.histogram) {
+        // Update histogram visualization from the histogram data
+        if (data.glare.histogram && data.glare.histogram.length > 0) {
             systemState.metrics.glare.histogram = data.glare.histogram;
             updateGlareHistogram(data.glare.histogram, data.glare.detected);
         }
         
-        // Update indicator
+        // Update indicator with dynamic color based on glare percentage (0-100%)
         glareIndicator.classList.remove('secure', 'alert', 'warning');
         glareIndicator.classList.add(glareStatus);
+        const ratio = Math.min(1, glarePercentage / 100);
+        const colorRGB = {
+            r: Math.round(255 * ratio),
+            g: Math.round(229 * (1 - ratio)),
+            b: Math.round(255 * (1 - ratio))
+        };
+        const color = `rgb(${colorRGB.r}, ${colorRGB.g}, ${colorRGB.b})`;
+        glareIndicator.style.color = color;
+        glareIndicator.style.textShadow = `0 0 ${Math.max(5, glarePercentage * 0.5)}px ${color}`;
 
         if (data.glare.detected) {
-            triggerAlert('GLARE', `Critical Threat: Glare Detected (${data.glare.percentage.toFixed(1)}%)!`);
+            triggerAlert('GLARE', `Critical Threat: Glare Detected (${glarePercentage.toFixed(1)}%)!`);
         }
     }
 

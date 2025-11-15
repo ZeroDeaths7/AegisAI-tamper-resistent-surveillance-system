@@ -178,6 +178,31 @@
                 </div>
             </div>
         </section>
+
+        <!-- Historical Incidents Section -->
+        <section class="incidents-section">
+            <h2 class="section-title">Historical Incidents</h2>
+            <div class="incidents-container" id="incidentsContainer">
+                <div class="incidents-placeholder">
+                    <p>No incidents recorded yet</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Liveness Video Validation Section -->
+        <section class="liveness-validation-section">
+            <h2 class="section-title">Liveness Video Validation</h2>
+            <div class="validation-upload-area">
+                <div class="upload-box" id="uploadBox">
+                    <p class="upload-text">Drag & drop video file here or click to select</p>
+                    <input type="file" id="videoFileInput" accept="video/*" style="display: none;">
+                </div>
+                <div id="validationResult" class="validation-result hidden">
+                    <h3>Validation Results</h3>
+                    <div id="validationContent"></div>
+                </div>
+            </div>
+        </section>
     </main>
 
     <!-- Repositioning Alert Modal -->

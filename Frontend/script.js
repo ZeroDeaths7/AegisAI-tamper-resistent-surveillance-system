@@ -498,3 +498,266 @@ if (typeof module !== 'undefined' && module.exports) {
         systemState
     };
 }
+
+// ============================================================================
+// HISTORICAL INCIDENTS PANEL
+// ============================================================================
+
+function loadIncidents() {
+    fetch('/api/incidents')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.incidents && data.incidents.length > 0) {
+                displayIncidents(data.incidents);
+            } else {
+                displayIncidentsPlaceholder();
+            }
+        })
+        .catch(error => console.error('Error loading incidents:', error));
+}
+
+function displayIncidents(incidents) {
+    const container = document.getElementById('incidentsContainer');
+    container.innerHTML = '';
+    
+    incidents.forEach((item, index) => {
+        const incident = item.incident;
+        const audioLogs = item.audio_logs || [];
+        const glareImages = item.glare_images || [];
+        
+        const incidentRow = document.createElement('div');
+        incidentRow.className = 'incident-row';
+        incidentRow.innerHTML = `
+            <div class="incident-header" onclick="toggleIncidentDetails(this)">
+                <div style="display: flex; gap: 15px; flex: 1;">
+                    <span class="incident-type">${incident.incident_type}</span>
+                    <span style="color: #888; font-size: 12px;">Primary: ${incident.primary_detection}</span>
+                </div>
+                <div class="incident-meta">
+                    <span>Time: ${new Date(incident.timestamp * 1000).toLocaleTimeString()}</span>
+                    <span>Count: ${incident.count}</span>
+                </div>
+                <span class="incident-expand-icon">▼</span>
+            </div>
+            
+            <div class="incident-details">
+                ${incident.description ? `
+                    <div class="incident-detail-section">
+                        <div class="detail-label">Description</div>
+                        <div class="detail-content">${incident.description}</div>
+                    </div>
+                ` : ''}
+                
+                ${audioLogs.length > 0 ? `
+                    <div class="incident-detail-section">
+                        <div class="detail-label">Audio Logs (${audioLogs.length})</div>
+                        <div class="detail-content">
+                            ${audioLogs.map(log => `<div>• ${log.text}</div>`).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+                
+                ${glareImages.length > 0 ? `
+                    <div class="incident-detail-section">
+                        <div class="detail-label">Glare Images (${glareImages.length})</div>
+                        <div class="detail-content">
+                            ${glareImages.map(img => `
+                                <div>Glare: ${img.glare_percentage.toFixed(1)}% - 
+                                    <a href="/api/incidents/${img.id}/glare-image" target="_blank" style="color: #00E5FF; text-decoration: underline;">View</a>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+        
+        container.appendChild(incidentRow);
+    });
+}
+
+function displayIncidentsPlaceholder() {
+    const container = document.getElementById('incidentsContainer');
+    container.innerHTML = '<div class="incidents-placeholder"><p>No incidents recorded yet</p></div>';
+}
+
+function toggleIncidentDetails(headerElement) {
+    const row = headerElement.parentElement;
+    const details = row.querySelector('.incident-details');
+    const icon = headerElement.querySelector('.incident-expand-icon');
+    
+    details.classList.toggle('expanded');
+    icon.classList.toggle('expanded');
+}
+
+// ============================================================================
+// LIVENESS VIDEO VALIDATION
+// ============================================================================
+
+function setupVideoValidation() {
+    const uploadBox = document.getElementById('uploadBox');
+    const videoFileInput = document.getElementById('videoFileInput');
+    
+    // Click to upload
+    uploadBox.addEventListener('click', () => {
+        videoFileInput.click();
+    });
+    
+    // Drag and drop
+    uploadBox.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadBox.classList.add('dragover');
+    });
+    
+    uploadBox.addEventListener('dragleave', () => {
+        uploadBox.classList.remove('dragover');
+    });
+    
+    uploadBox.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadBox.classList.remove('dragover');
+        
+        if (e.dataTransfer.files.length > 0) {
+            handleVideoUpload(e.dataTransfer.files[0]);
+        }
+    });
+    
+    // File input change
+    videoFileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            handleVideoUpload(e.target.files[0]);
+        }
+    });
+}
+
+function handleVideoUpload(file) {
+    const formData = new FormData();
+    formData.append('video', file);
+    
+    // Try to get current incident ID if available
+    if (systemState && systemState.currentIncidentId) {
+        formData.append('incident_id', systemState.currentIncidentId);
+    }
+    
+    // Get current time as video start timestamp
+    formData.append('video_start_timestamp', Math.floor(Date.now() / 1000));
+    
+    const resultDiv = document.getElementById('validationResult');
+    const contentDiv = document.getElementById('validationContent');
+    
+    contentDiv.innerHTML = '<p style="color: #888;">Uploading and validating video...</p>';
+    resultDiv.classList.remove('hidden');
+    
+    fetch('/api/validate-liveness-video', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            displayValidationResults(data.validation);
+        } else {
+            contentDiv.innerHTML = `<p style="color: #FF3B3B;">Error: ${data.error}</p>`;
+        }
+    })
+    .catch(error => {
+        console.error('Upload error:', error);
+        contentDiv.innerHTML = `<p style="color: #FF3B3B;">Upload failed: ${error.message}</p>`;
+    });
+}
+
+function displayValidationResults(validation) {
+    const contentDiv = document.getElementById('validationContent');
+    const status = validation.overall_status;
+    const statusIcon = status === 'PASS' ? '✓' : (status === 'FAIL' ? '✗' : '?');
+    const statusColor = status === 'PASS' ? 'pass' : (status === 'FAIL' ? 'fail' : 'unknown');
+    
+    let html = `
+        <div class="validation-status ${statusColor}">
+            <span class="validation-status-icon">${statusIcon}</span>
+            <span class="validation-status-text">Overall Status: <strong>${status}</strong></span>
+        </div>
+        
+        <div style="font-size: 12px; color: #888; margin-bottom: 15px;">
+            Frames checked: ${validation.total_frames_checked} | Tampered: ${validation.tampered_count}
+        </div>
+    `;
+    
+    if (validation.tampered_frames && validation.tampered_frames.length > 0) {
+        html += `
+            <div style="margin-bottom: 15px;">
+                <div class="detail-label" style="color: #FF3B3B; margin-bottom: 8px;">Tampered Frames</div>
+                <div class="frame-results">
+                    ${validation.tampered_frames.map(frame => `
+                        <div class="frame-result-item fail">
+                            Second ${frame.second}: ${frame.reason}
+                            ${frame.expected_token ? ` (Expected: ${frame.expected_token}, Got: ${frame.extracted_token})` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+    
+    if (validation.frame_results && Object.keys(validation.frame_results).length > 0) {
+        const passFrames = Object.values(validation.frame_results).filter(f => f.status === 'PASS').length;
+        html += `
+            <div style="font-size: 11px; color: #888; padding: 10px; background: rgba(0, 229, 255, 0.05); border-radius: 4px;">
+                <strong>${passFrames}/${Object.keys(validation.frame_results).length}</strong> frames passed watermark validation
+            </div>
+        `;
+    }
+    
+    contentDiv.innerHTML = html;
+}
+
+// ============================================================================
+// INITIALIZATION
+// ============================================================================
+
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('Aegis Dashboard initialized');
+
+    updateMetric('blur', 0, 'secure');
+    updateMetric('shake', 0, 'secure');
+    updateMetric('glare', 0, 'secure');
+    updateMetric('liveness', 1, 'secure');
+
+    addLogEntry('Aegis system initialized', 'secure');
+    addLogEntry('Connecting to camera feed...', 'secure');
+    
+    // Setup sensor toggle switches (both in settings and inline with metrics)
+    document.querySelectorAll('.sensor-checkbox, .sensor-checkbox-inline, .setting-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', (e) => {
+            const sensor = e.target.dataset.sensor;
+            const enabled = e.target.checked;
+            
+            // Update all toggles to stay in sync
+            document.querySelectorAll(`[data-sensor="${sensor}"]`).forEach(el => {
+                el.checked = enabled;
+            });
+            
+            // Send to backend
+            socket.emit('set_sensor_enabled', {
+                sensor: sensor,
+                enabled: enabled
+            });
+            
+            console.log(`${sensor} toggled to ${enabled}`);
+        });
+    });
+
+    // Request initial sensor states from backend
+    socket.emit('get_sensor_states');
+    
+    // Setup video validation
+    setupVideoValidation();
+    
+    // Load incidents
+    loadIncidents();
+    
+    // Reload incidents every 10 seconds
+    setInterval(loadIncidents, 10000);
+
+    startVideoStream();
+});

@@ -4,3 +4,5 @@ Flask
 Flask-SocketIO
 SpeechRecognition
 PyAudio
+pytesseract
+Pillow

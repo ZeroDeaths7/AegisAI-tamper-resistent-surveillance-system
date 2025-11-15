@@ -3,7 +3,7 @@ AEGIS: Active Defense System - Main Flask Server
 Streams live video feed with tamper detection and real-time alerts via Socket.IO
 """
 
-from flask import Flask, render_template, Response, send_from_directory
+from flask import Flask, render_template, Response, send_from_directory, send_file, request, jsonify
 from flask_socketio import SocketIO, emit
 import cv2
 import numpy as np
@@ -13,6 +13,11 @@ import os
 import threading
 import time
 import speech_recognition
+from werkzeug.utils import secure_filename
+
+# Import backend modules
+from backend.database import aegis_db, save_glare_image, get_incident_description
+from backend.watermark_validator import validate_video_watermarks, validate_video_watermarks_basic
 
 # Try to import glare rescue functions, but make them optional
 try:
@@ -94,9 +99,20 @@ LOG_AUDIO_SUBTITLES = False
 audio_logging_lock = threading.Lock()
 detection_data_cache = None
 
-# ============================================================================
-# CAMERA AND DETECTION FUNCTIONS
-# ============================================================================
+# Incident tracking globals
+current_incident_id = None
+last_detection_timestamp = None
+detection_tracking_lock = threading.Lock()
+
+# Storage configuration
+UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'storage', 'liveness_videos')
+ALLOWED_EXTENSIONS = {'mp4', 'avi', 'mov', 'mkv'}
+
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max file size
 
 def initialize_camera():
     """Initialize the camera capture object."""
@@ -115,6 +131,20 @@ def initialize_camera():
     
     print("Camera initialized successfully.")
     return True
+
+def record_detection(detection_type, timestamp):
+    """
+    Record a detection incident to the database.
+    Groups same-type detections within 5 seconds as one incident.
+    """
+    global current_incident_id
+    
+    with detection_tracking_lock:
+        description = get_incident_description(detection_type)
+        incident_id = aegis_db.record_detection(detection_type, timestamp, description)
+        current_incident_id = incident_id
+    
+    return incident_id
 
 def audio_logging_thread():
     """
@@ -141,6 +171,14 @@ def audio_logging_thread():
                 try:
                     text = r.recognize_google(audio)
                     print(f"[AUDIO] Recognized speech: {text}")
+                    
+                    # Save audio log to database
+                    audio_timestamp = time.time()
+                    try:
+                        aegis_db.add_audio_log(text, audio_timestamp, current_incident_id)
+                        print(f"[AUDIO] ✓ Audio log saved to database")
+                    except Exception as e:
+                        print(f"[AUDIO] ✗ Error saving audio log: {e}")
                     
                     # Send the subtitle to the frontend
                     try:
@@ -275,6 +313,22 @@ def camera_thread():
         # Determine if ANY tamper is detected (for audio logging trigger)
         any_tamper_detected = is_blurred or is_shaken or is_glare or is_frozen or is_blackout or is_major_tamper
         
+        # --- RECORD DETECTIONS TO DATABASE ---
+        if is_blurred:
+            record_detection('blur', current_time)
+        if is_shaken:
+            record_detection('shake', current_time)
+        if is_glare:
+            record_detection('glare', current_time)
+        if is_repositioned:
+            record_detection('reposition', current_time)
+        if is_frozen:
+            record_detection('freeze', current_time)
+        if is_blackout:
+            record_detection('blackout', current_time)
+        if is_major_tamper:
+            record_detection('major_tamper', current_time)
+        
         # Manage repositioning alert state
         global reposition_alert_active, reposition_alert_shown, reposition_alert_frames
         if is_repositioned:
@@ -389,6 +443,15 @@ def camera_thread():
                     frame_for_processing = cv2.cvtColor(enhanced_lab_frame, cv2.COLOR_LAB2BGR)
                     frame_for_processing = apply_unsharp_mask(frame_for_processing, amount=1.0)
                 print(f"[GLARE] Rescue applied successfully!")
+                
+                # Save glare image to storage and database
+                try:
+                    file_path = save_glare_image(frame_for_processing, glare_percentage, current_time)
+                    aegis_db.add_glare_image(file_path, glare_percentage, current_time, current_incident_id)
+                    print(f"[GLARE] ✓ Rescued image saved: {file_path}")
+                except Exception as e:
+                    print(f"[GLARE] ✗ Error saving glare image: {e}")
+                    
             except Exception as e:
                 print(f"[GLARE] Rescue error: {e}")
                 frame_for_processing = frame.copy()
@@ -541,6 +604,153 @@ def serve_css():
 def serve_js():
     """Serve the JavaScript file."""
     return send_from_directory('./Frontend', 'script.js')
+
+# ============================================================================
+# INCIDENT & HISTORY API ENDPOINTS
+# ============================================================================
+
+@app.route('/api/incidents', methods=['GET'])
+def get_incidents():
+    """Get recent incidents (last 5)."""
+    try:
+        incidents = aegis_db.get_recent_incidents(limit=5)
+        return jsonify({
+            'success': True,
+            'incidents': incidents,
+            'count': len(incidents)
+        })
+    except Exception as e:
+        print(f"Error retrieving incidents: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/incidents/<int:incident_id>', methods=['GET'])
+def get_incident(incident_id):
+    """Get a specific incident with all related data."""
+    try:
+        incident = aegis_db.get_incident_by_id(incident_id)
+        if not incident:
+            return jsonify({'success': False, 'error': 'Incident not found'}), 404
+        
+        return jsonify({
+            'success': True,
+            'incident': incident
+        })
+    except Exception as e:
+        print(f"Error retrieving incident: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/incidents/<int:incident_id>/audio', methods=['GET'])
+def get_incident_audio(incident_id):
+    """Get audio logs for a specific incident."""
+    try:
+        audio_logs = aegis_db.get_audio_logs_for_incident(incident_id)
+        return jsonify({
+            'success': True,
+            'audio_logs': audio_logs,
+            'count': len(audio_logs)
+        })
+    except Exception as e:
+        print(f"Error retrieving audio logs: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/incidents/<int:image_id>/glare-image', methods=['GET'])
+def get_glare_image(image_id):
+    """Serve a glare image file."""
+    try:
+        file_path = aegis_db.get_glare_image_path(image_id)
+        if not file_path or not os.path.exists(file_path):
+            return jsonify({'success': False, 'error': 'Image not found'}), 404
+        
+        return send_file(file_path, mimetype='image/jpeg')
+    except Exception as e:
+        print(f"Error retrieving glare image: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/validate-liveness-video', methods=['POST'])
+def validate_liveness_video():
+    """
+    Upload and validate a liveness video for watermark integrity.
+    Checks HMAC tokens at 1-second intervals.
+    """
+    try:
+        # Check if file is present
+        if 'video' not in request.files:
+            return jsonify({
+                'success': False,
+                'error': 'No video file provided'
+            }), 400
+        
+        file = request.files['video']
+        
+        if file.filename == '':
+            return jsonify({
+                'success': False,
+                'error': 'No file selected'
+            }), 400
+        
+        # Save uploaded file
+        filename = secure_filename(f"liveness_{int(time.time())}.mp4")
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(file_path)
+        
+        print(f"[LIVENESS] Video uploaded: {file_path}")
+        
+        # Get video start timestamp if provided
+        video_start_timestamp = request.form.get('video_start_timestamp')
+        if video_start_timestamp:
+            try:
+                video_start_timestamp = int(float(video_start_timestamp))
+            except:
+                video_start_timestamp = None
+        
+        # Validate watermarks
+        validation_result = validate_video_watermarks(file_path, video_start_timestamp)
+        
+        if not validation_result.get('success', True):
+            print(f"[LIVENESS] Validation failed: {validation_result.get('error')}")
+        else:
+            print(f"[LIVENESS] Validation complete - Status: {validation_result.get('overall_status')}")
+        
+        # Save validation to database
+        try:
+            incident_id = request.form.get('incident_id')
+            incident_id = int(incident_id) if incident_id else None
+            
+            aegis_db.add_liveness_validation(
+                file_path,
+                validation_result.get('overall_status', 'UNKNOWN'),
+                validation_result.get('frame_results', {}),
+                time.time(),
+                incident_id
+            )
+            print("[LIVENESS] ✓ Validation result saved to database")
+        except Exception as e:
+            print(f"[LIVENESS] ✗ Error saving validation to database: {e}")
+        
+        return jsonify({
+            'success': True,
+            'validation': validation_result,
+            'file_path': file_path
+        })
+        
+    except Exception as e:
+        print(f"[LIVENESS] Error processing video: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 # ============================================================================
 # SOCKET.IO EVENT HANDLERS

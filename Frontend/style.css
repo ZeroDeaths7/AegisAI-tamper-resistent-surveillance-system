@@ -968,3 +968,240 @@ body {
     left: 18px;
 }
 
+/* ============================================================================
+   HISTORICAL INCIDENTS SECTION
+   ============================================================================ */
+
+.incidents-section {
+    background-color: #202020;
+    border-radius: 8px;
+    padding: 25px 30px;
+    margin-bottom: 30px;
+    border-top: 2px solid #00E5FF;
+}
+
+.section-title {
+    font-size: 16px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: #00E5FF;
+    margin-bottom: 20px;
+    letter-spacing: 1px;
+}
+
+.incidents-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.incidents-placeholder {
+    text-align: center;
+    padding: 40px 20px;
+    color: #666666;
+    font-size: 14px;
+}
+
+.incident-row {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(0, 229, 255, 0.15);
+    border-radius: 6px;
+    padding: 15px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.incident-row:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(0, 229, 255, 0.3);
+}
+
+.incident-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.incident-type {
+    font-weight: 600;
+    color: #00E5FF;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.incident-meta {
+    display: flex;
+    gap: 15px;
+    font-size: 12px;
+    color: #888;
+}
+
+.incident-expand-icon {
+    color: #00E5FF;
+    transition: transform 0.3s ease;
+}
+
+.incident-expand-icon.expanded {
+    transform: rotate(180deg);
+}
+
+.incident-details {
+    display: none;
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid rgba(0, 229, 255, 0.1);
+}
+
+.incident-details.expanded {
+    display: block;
+}
+
+.incident-detail-section {
+    margin-bottom: 12px;
+}
+
+.detail-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #00E5FF;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+    letter-spacing: 0.5px;
+}
+
+.detail-content {
+    font-size: 12px;
+    color: #ccc;
+    line-height: 1.5;
+    padding-left: 10px;
+    border-left: 2px solid rgba(0, 229, 255, 0.2);
+}
+
+.glare-image-thumbnail {
+    max-width: 100px;
+    max-height: 100px;
+    border-radius: 4px;
+    margin-top: 6px;
+    border: 1px solid rgba(0, 229, 255, 0.2);
+}
+
+/* ============================================================================
+   LIVENESS VIDEO VALIDATION SECTION
+   ============================================================================ */
+
+.liveness-validation-section {
+    background-color: #202020;
+    border-radius: 8px;
+    padding: 25px 30px;
+    margin-bottom: 30px;
+    border-top: 2px solid #00E5FF;
+}
+
+.validation-upload-area {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+.upload-box {
+    border: 2px dashed rgba(0, 229, 255, 0.3);
+    border-radius: 8px;
+    padding: 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    background: rgba(0, 229, 255, 0.05);
+}
+
+.upload-box:hover {
+    border-color: rgba(0, 229, 255, 0.6);
+    background: rgba(0, 229, 255, 0.1);
+}
+
+.upload-box.dragover {
+    border-color: #00E5FF;
+    background: rgba(0, 229, 255, 0.15);
+}
+
+.upload-text {
+    color: #888;
+    font-size: 14px;
+    margin: 0;
+}
+
+.validation-result {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(0, 229, 255, 0.15);
+    border-radius: 6px;
+    padding: 20px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.validation-result.hidden {
+    display: none;
+}
+
+.validation-result h3 {
+    color: #00E5FF;
+    font-size: 13px;
+    margin-bottom: 15px;
+    text-transform: uppercase;
+}
+
+.validation-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 15px;
+    padding: 10px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.validation-status.pass {
+    border-left: 3px solid #00E5FF;
+}
+
+.validation-status.fail {
+    border-left: 3px solid #FF3B3B;
+}
+
+.validation-status-icon {
+    font-size: 18px;
+}
+
+.validation-status-text {
+    font-size: 12px;
+    color: #ccc;
+}
+
+.frame-results {
+    font-size: 11px;
+    color: #888;
+    margin-top: 10px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.frame-result-item {
+    padding: 6px;
+    margin-bottom: 4px;
+    border-left: 2px solid rgba(0, 229, 255, 0.2);
+    padding-left: 8px;
+}
+
+.frame-result-item.pass {
+    color: #00E5FF;
+}
+
+.frame-result-item.fail {
+    color: #FF3B3B;
+}
+
+.frame-result-item.unknown {
+    color: #FFB800;
+}
+
+

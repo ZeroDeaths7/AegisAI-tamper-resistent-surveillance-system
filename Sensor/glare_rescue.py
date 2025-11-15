@@ -36,7 +36,9 @@ def apply_msr_hsv(frame, scales=[11, 81, 251]):
     # 1. Convert back from log space and normalize
     # This gives the "reflectance" (enhanced V channel)
     reflectance_v = np.expm1(msr_v)
-    reflectance_v = cv2.normalize(reflectance_v, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
+    reflectance_v_normalized = np.zeros_like(reflectance_v, dtype=np.uint8)
+    cv2.normalize(reflectance_v, reflectance_v_normalized, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+    reflectance_v = reflectance_v_normalized
 
     # 2. Simple Contrast Stretch on the V channel
     # This often improves the MSR result significantly
@@ -125,7 +127,7 @@ if __name__ == "__main__":
     rects_bucketed = ax2.bar(x_bucketed, np.zeros(nbins), width=1.0, color='g')
     ax2.set_xlim(0, nbins - 1)
     
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.tight_layout(rect=(0, 0.03, 1, 0.95))
 
     # --- Main Loop ---
     while True:

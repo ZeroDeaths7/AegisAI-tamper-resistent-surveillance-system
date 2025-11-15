@@ -14,6 +14,19 @@ import threading
 import time
 import speech_recognition
 
+# Try to import glare rescue functions, but make them optional
+try:
+    from Sensor.glare_rescue import apply_msr_hsv, apply_unsharp_mask, get_image_viability_stats
+    GLARE_RESCUE_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Glare rescue functions not available: {e}")
+    GLARE_RESCUE_AVAILABLE = False
+    # Dummy functions
+    def apply_msr_hsv(frame):
+        return frame
+    def apply_unsharp_mask(frame, amount=1.0):
+        return frame
+
 # ============================================================================
 # INITIALIZATION
 # ============================================================================
@@ -32,9 +45,11 @@ REPOSITION_THRESHOLD = 5.0  # Threshold for directional shift magnitude - lower 
 CAMERA_INDEX = 0
 BLUR_FIX_ENABLED = True
 BLUR_FIX_STRENGTH = 5
+GLARE_RESCUE_ENABLED = True  # Disabled for now - enable after testing
+GLARE_RESCUE_MODE = 'MSR'  # Options: 'CLAHE', 'MSR'
 
 # Liveness detection configuration
-LIVENESS_THRESHOLD = 3.0        # LOW threshold: detects freezing/static feed
+LIVENESS_THRESHOLD = 2.0        # LOW threshold: detects freezing/static feed
 MAJOR_TAMPER_THRESHOLD = 60.0   # HIGH threshold: detects sudden, massive scene change
 BLACKOUT_BRIGHTNESS_THRESHOLD = 25.0  # Mean pixel intensity threshold for blackout (0-255 range)
 LIVENESS_CHECK_INTERVAL = 3.0   # Time (in seconds) between capturing a new reference frame
@@ -45,7 +60,7 @@ cap = None
 prev_gray = None
 current_frame = None  # Raw frame without text
 processed_frame = None  # Frame with detection text
-frame_lock = None
+frame_lock = threading.Lock()
 reposition_alert_active = False
 reposition_alert_shown = False  # Track if we've already shown the alert for this event
 reposition_alert_frames = 0
@@ -57,6 +72,10 @@ liveness_startup_time = None
 liveness_is_frozen = False
 liveness_status_text = "INITIALIZING"
 
+# Initialize frames with blank black images (640x480) so they display while loading
+current_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+processed_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+
 # Audio logging globals
 LOG_AUDIO_SUBTITLES = False
 detection_data_cache = None
@@ -67,9 +86,8 @@ detection_data_cache = None
 
 def initialize_camera():
     """Initialize the camera capture object."""
-    global cap, frame_lock
+    global cap
     
-    frame_lock = threading.Lock()
     cap = cv2.VideoCapture(CAMERA_INDEX)
     
     if not cap.isOpened():
@@ -140,9 +158,15 @@ def camera_thread():
     global liveness_reference_frame, liveness_reference_time, liveness_startup_time
     global liveness_is_frozen, liveness_status_text
     
+    print("[CAMERA] Camera thread starting...")
+    
+    if cap is None:
+        print("[CAMERA] ERROR: Camera not initialized!")
+        return
+    
     ret, first_frame = cap.read()
     if not ret:
-        print("Error: Could not read first frame.")
+        print("[CAMERA] Error: Could not read first frame.")
         return
     
     prev_gray = cv2.cvtColor(first_frame, cv2.COLOR_BGR2GRAY)
@@ -151,13 +175,18 @@ def camera_thread():
     liveness_startup_time = time.time()  # Grace period tracker
     frame_count = 0
     
+    print("[CAMERA] Camera thread initialized successfully. Starting main loop...")
+    print(f"[CAMERA] Frame size: {first_frame.shape}")
+    
     while True:
         ret, frame = cap.read()
         if not ret:
-            print("Error: Could not read frame.")
+            print("[CAMERA] Error: Could not read frame.")
             break
         
         frame_count += 1
+        if frame_count == 1:
+            print("[CAMERA] ✓ First frame captured! Stream is live.")
         
         # Convert to grayscale
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -300,7 +329,29 @@ def camera_thread():
         except Exception as e:
             print(f"Error emitting detection data: {e}")
         
-        # Create processed frame with blur fixing
+        # --- GLARE RESCUE (Applied FIRST, before blur fixing) ---
+        frame_for_processing = frame.copy()  # Start with original frame
+        if is_glare and GLARE_RESCUE_ENABLED:
+            try:
+                print(f"[GLARE] Applying glare rescue (mode: {GLARE_RESCUE_MODE})...")
+                if GLARE_RESCUE_MODE == 'MSR':
+                    # MSR (Multi-Scale Retinex) in HSV space - better for color preservation
+                    frame_for_processing = apply_msr_hsv(frame_for_processing)
+                else:
+                    # CLAHE + Unsharp mask - proven method
+                    lab_frame = cv2.cvtColor(frame_for_processing, cv2.COLOR_BGR2LAB)
+                    l, a, b = cv2.split(lab_frame)
+                    clahe = cv2.createCLAHE(clipLimit=12.0, tileGridSize=(4, 4))
+                    l_clahe = clahe.apply(l)
+                    enhanced_lab_frame = cv2.merge((l_clahe, a, b))
+                    frame_for_processing = cv2.cvtColor(enhanced_lab_frame, cv2.COLOR_LAB2BGR)
+                    frame_for_processing = apply_unsharp_mask(frame_for_processing, amount=1.0)
+                print(f"[GLARE] Rescue applied successfully!")
+            except Exception as e:
+                print(f"[GLARE] Rescue error: {e}")
+                frame_for_processing = frame.copy()
+        
+        # Create processed frame with blur fixing (applied AFTER glare rescue)
         if BLUR_FIX_ENABLED:
             # Always apply unsharp masking, but dynamically adjust strength based on blur variance
             # Lower variance = more blurry = higher strength
@@ -313,11 +364,11 @@ def camera_thread():
             else:
                 dynamic_strength = max(3, 8.5 - (blur_variance - 100) / 40)  # Scale down, but keep at 5.0 minimum
             
-            # Apply unsharp masking with dynamic strength
-            frame_with_text = fix_blur_unsharp_mask(frame, kernel_size=5, sigma=1.0, strength=dynamic_strength)
+            # Apply unsharp masking with dynamic strength to the glare-rescued frame
+            processed_frame_final = fix_blur_unsharp_mask(frame_for_processing, kernel_size=5, sigma=1.0, strength=dynamic_strength)
         else:
-            # Blur fix disabled, use original frame
-            frame_with_text = frame.copy()
+            # Blur fix disabled, use glare-rescued frame as-is
+            processed_frame_final = frame_for_processing
         
         # Update previous frame
         prev_gray = gray
@@ -325,7 +376,7 @@ def camera_thread():
         # Store frames for streaming
         with frame_lock:
             current_frame = frame.copy()  # Raw unmodified frame
-            processed_frame = frame_with_text.copy()  # Frame with blur fix applied if needed
+            processed_frame = processed_frame_final.copy()  # Frame with glare rescue + blur fix applied
         
         # Small delay to prevent CPU overload
         if frame_count % 10 == 0:

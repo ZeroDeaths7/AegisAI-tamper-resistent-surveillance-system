@@ -7,7 +7,7 @@ from flask import Flask, render_template, Response, send_from_directory
 from flask_socketio import SocketIO, emit
 import cv2
 import numpy as np
-import tamper_detector
+import Tamper.tamper_detector as tamper_detector
 import os
 import threading
 import time

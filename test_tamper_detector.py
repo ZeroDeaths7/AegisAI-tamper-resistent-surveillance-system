@@ -1,5 +1,5 @@
 import cv2
-import tamper_detector # <-- IMPORT YOUR NEW MODULE
+import Tamper.tamper_detector as tamper_detector # <-- IMPORT YOUR NEW MODULE
 
 # --- Configuration ---
 BLUR_THRESHOLD = 90.0

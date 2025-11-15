@@ -24,8 +24,8 @@ app = Flask(__name__,
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Configuration
-BLUR_THRESHOLD = 100.0
-SHAKE_THRESHOLD = 1.1
+BLUR_THRESHOLD = 90.0
+SHAKE_THRESHOLD = 6.0
 CAMERA_INDEX = 0
 
 # Global variables

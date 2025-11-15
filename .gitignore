@@ -11,6 +11,11 @@ venv/
 *.env
 .env
 
+# Ignore virtual environments
+venv/
+.venv/
+
+
 # IDE / Editor Files
 .vscode/
 .idea/

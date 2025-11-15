@@ -292,12 +292,26 @@ socket.on('alert', (data) => {
     // If it's an audio logging alert, update the indicator
     if (data.type === 'AUDIO_LOGGING') {
         updateAudioIndicator(true);
+        
+        // Update placeholder text when audio logging starts
+        if (subtitleLog.children.length === 1 && 
+            subtitleLog.children[0].textContent.includes('Audio logging disabled')) {
+            const placeholderEntry = subtitleLog.children[0];
+            placeholderEntry.querySelector('.log-message').textContent = 'Audio logging enabled';
+        }
     }
 });
 
 socket.on('subtitle', (data) => {
     console.log('Subtitle received:', data);
     const time = getCurrentTime();
+    
+    // Clear placeholder if this is the first real entry
+    if (subtitleLog.children.length === 1 && 
+        subtitleLog.children[0].textContent.includes('Audio logging disabled')) {
+        subtitleLog.innerHTML = '';
+    }
+    
     const subtitleEntry = document.createElement('div');
     subtitleEntry.className = `log-entry ${data.is_blackbox ? 'warning' : 'secure'}`;
     subtitleEntry.innerHTML = `
@@ -316,6 +330,13 @@ socket.on('subtitle', (data) => {
 socket.on('alert_clear', () => {
     console.log('Alert cleared');
     updateAudioIndicator(false);
+    
+    // Change back to "disabled" if no actual entries yet
+    if (subtitleLog.children.length === 1 && 
+        subtitleLog.children[0].textContent.includes('Audio logging enabled')) {
+        const placeholderEntry = subtitleLog.children[0];
+        placeholderEntry.querySelector('.log-message').textContent = 'Audio logging disabled';
+    }
 });
 
 socket.on('status_update', (data) => {

@@ -83,7 +83,7 @@ let systemState = {
         blur: { value: 0, status: 'secure' },
         shake: { value: 0, status: 'secure' },
         glare: { value: 0, status: 'secure' },
-        liveness: { value: 1, status: 'secure' }
+        liveness: { value: 'INITIALIZING...', status: 'secure' }
     }
 };
 
@@ -262,11 +262,23 @@ socket.on('detection_update', (data) => {
     }
 
     if (data.liveness) {
-        const livenessStatus = data.liveness.frozen ? 'alert' : 'secure';
-        updateMetric('liveness', data.liveness.frozen ? 0 : 1, livenessStatus);
+        // Display status text instead of numeric value
+        let livenessStatus = 'secure';
+        if (data.liveness.frozen || data.liveness.blackout || data.liveness.major_tamper) {
+            livenessStatus = 'alert';
+        } else if (!data.liveness.is_active) {
+            livenessStatus = 'warning';
+        }
+        
+        // Show the text status instead of numeric value
+        updateMetric('liveness', data.liveness.status, livenessStatus);
 
         if (data.liveness.frozen) {
-            triggerAlert('LIVENESS', 'Feed Frozen - Potential Replay Attack!');
+            triggerAlert('LIVENESS', 'Frozen Feed Detected - Potential Replay Attack!');
+        } else if (data.liveness.blackout) {
+            triggerAlert('LIVENESS', 'Blackout Detected - Camera Covered!');
+        } else if (data.liveness.major_tamper) {
+            triggerAlert('LIVENESS', 'Major Tamper Detected - Scene Change!');
         }
     }
 
@@ -280,12 +292,26 @@ socket.on('alert', (data) => {
     // If it's an audio logging alert, update the indicator
     if (data.type === 'AUDIO_LOGGING') {
         updateAudioIndicator(true);
+        
+        // Update placeholder text when audio logging starts
+        if (subtitleLog.children.length === 1 && 
+            subtitleLog.children[0].textContent.includes('Audio logging disabled')) {
+            const placeholderEntry = subtitleLog.children[0];
+            placeholderEntry.querySelector('.log-message').textContent = 'Audio logging enabled';
+        }
     }
 });
 
 socket.on('subtitle', (data) => {
     console.log('Subtitle received:', data);
     const time = getCurrentTime();
+    
+    // Clear placeholder if this is the first real entry
+    if (subtitleLog.children.length === 1 && 
+        subtitleLog.children[0].textContent.includes('Audio logging disabled')) {
+        subtitleLog.innerHTML = '';
+    }
+    
     const subtitleEntry = document.createElement('div');
     subtitleEntry.className = `log-entry ${data.is_blackbox ? 'warning' : 'secure'}`;
     subtitleEntry.innerHTML = `
@@ -304,6 +330,13 @@ socket.on('subtitle', (data) => {
 socket.on('alert_clear', () => {
     console.log('Alert cleared');
     updateAudioIndicator(false);
+    
+    // Change back to "disabled" if no actual entries yet
+    if (subtitleLog.children.length === 1 && 
+        subtitleLog.children[0].textContent.includes('Audio logging enabled')) {
+        const placeholderEntry = subtitleLog.children[0];
+        placeholderEntry.querySelector('.log-message').textContent = 'Audio logging disabled';
+    }
 });
 
 socket.on('status_update', (data) => {
@@ -313,6 +346,17 @@ socket.on('status_update', (data) => {
     } else if (data.status === 'threat') {
         updateSystemStatus(true);
     }
+});
+
+socket.on('sensor_states', (data) => {
+    console.log('Received sensor states:', data);
+    
+    // Update all checkboxes (both settings tab and inline) to match backend state
+    Object.entries(data).forEach(([sensor, enabled]) => {
+        document.querySelectorAll(`[data-sensor="${sensor}"]`).forEach(checkbox => {
+            checkbox.checked = enabled;
+        });
+    });
 });
 
 // ============================================================================
@@ -336,8 +380,8 @@ document.addEventListener('keydown', (event) => {
     }
 
     if (event.key.toLowerCase() === 'l') {
-        triggerAlert('LIVENESS', 'Test: Feed Frozen');
-        updateMetric('liveness', 0, 'alert');
+        triggerAlert('LIVENESS', 'Test: Frozen Feed Detected');
+        updateMetric('liveness', 'FROZEN FEED ALERT', 'alert');
     }
 
     if (event.key.toLowerCase() === 'r') {
@@ -345,7 +389,7 @@ document.addEventListener('keydown', (event) => {
         updateMetric('blur', 75, 'secure');
         updateMetric('shake', 0.5, 'secure');
         updateMetric('glare', 0, 'secure');
-        updateMetric('liveness', 1, 'secure');
+        updateMetric('liveness', 'LIVE', 'secure');
         alertMessage.textContent = '✓ System Active - All Sensors Online';
         addLogEntry('System reset', 'secure');
     }
@@ -387,6 +431,30 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    // Setup sensor toggle switches (both in settings tab and inline with metrics)
+    document.querySelectorAll('.sensor-checkbox, .sensor-checkbox-inline, .setting-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', (e) => {
+            const sensor = e.target.dataset.sensor;
+            const enabled = e.target.checked;
+            
+            // Update all toggles to stay in sync
+            document.querySelectorAll(`[data-sensor="${sensor}"]`).forEach(el => {
+                el.checked = enabled;
+            });
+            
+            // Send to backend
+            socket.emit('set_sensor_enabled', {
+                sensor: sensor,
+                enabled: enabled
+            });
+            
+            console.log(`${sensor} toggled to ${enabled}`);
+        });
+    });
+
+    // Request initial sensor states from backend
+    socket.emit('get_sensor_states');
+
     startVideoStream();
 });
 
@@ -427,8 +495,13 @@ function startVideoStream() {
                 }
 
                 if (data.liveness) {
-                    const livenessStatus = data.liveness.frozen ? 'alert' : 'secure';
-                    updateMetric('liveness', data.liveness.frozen ? 0 : 1, livenessStatus);
+                    let livenessStatus = 'secure';
+                    if (data.liveness.frozen || data.liveness.blackout || data.liveness.major_tamper) {
+                        livenessStatus = 'alert';
+                    } else if (!data.liveness.is_active) {
+                        livenessStatus = 'warning';
+                    }
+                    updateMetric('liveness', data.liveness.status, livenessStatus);
                 }
             })
             .catch(error => {

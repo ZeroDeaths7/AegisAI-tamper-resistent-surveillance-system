@@ -20,7 +20,7 @@
         <div class="video-container">
             <!-- Left Panel: Raw Feed (Vulnerable) -->
             <div class="video-panel vulnerable">
-                <h2 class="panel-title">RAW FEED (VULNERABLE)</h2>
+                <h2 class="panel-title">RAW FEED</h2>
                 <div class="video-wrapper">
                     <img id="rawFeed" src="" alt="Raw Video Feed" class="video-stream">
                     <div class="panel-overlay"></div>
@@ -30,11 +30,11 @@
             <!-- Divider -->
             <div class="panel-divider"></div>
 
-            <!-- Right Panel: CLAHE Processed (Defended) -->
+            <!-- Right Panel: Blur-Fixed (Defended) -->
             <div class="video-panel defended">
-                <h2 class="panel-title">AEGIS PROCESSED (DEFENDED)</h2>
+                <h2 class="panel-title">AEGIS PROCESSED</h2>
                 <div class="video-wrapper">
-                    <img id="processedFeed" src="" alt="Processed Video Feed" class="video-stream">
+                    <img id="processedFeed" src="" alt="Processed Video Feed with Blur Correction" class="video-stream">
                     <div class="panel-overlay"></div>
                 </div>
             </div>
@@ -48,6 +48,11 @@
                     <span class="status-pulse"></span>
                     STATUS: SECURE
                 </div>
+                <!-- Audio Logging Indicator -->
+                <div class="audio-recording-indicator" id="audioIndicator">
+                    <span class="recording-light"></span>
+                    <span class="recording-text">Audio Logging: OFF</span>
+                </div>
             </div>
 
             <!-- Real-time Alert Banner -->
@@ -57,13 +62,30 @@
                 </div>
             </div>
 
-            <!-- Detection Log -->
-            <div class="detection-log">
+            <!-- Tabs Container -->
+            <div class="tabs-container">
+                <button class="tab-button active" data-tab="detection-log-tab">Detection Log</button>
+                <button class="tab-button" data-tab="audio-log-tab">Audio Log</button>
+            </div>
+
+            <!-- Detection Log Tab -->
+            <div id="detection-log-tab" class="tab-content active">
                 <h3 class="log-title">Detection Log</h3>
                 <div class="log-content" id="detectionLog">
                     <div class="log-entry secure">
                         <span class="log-time">Initializing...</span>
                         <span class="log-message">System started</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Audio Log Tab -->
+            <div id="audio-log-tab" class="tab-content">
+                <h3 class="log-title">Audio Subtitle Log</h3>
+                <div class="log-content" id="subtitleLog">
+                    <div class="log-entry secure">
+                        <span class="log-time">Waiting...</span>
+                        <span class="log-message">Audio logging disabled</span>
                     </div>
                 </div>
             </div>
@@ -84,6 +106,7 @@
             <div class="metric-item">
                 <div class="metric-label">Glare</div>
                 <div class="metric-value" id="glareValue">-</div>
+                <div id="glareHistogram" class="glare-histogram"></div>
                 <div class="metric-indicator" id="glareIndicator">●</div>
             </div>
             <div class="metric-item">
@@ -93,6 +116,16 @@
             </div>
         </section>
     </main>
+
+    <!-- Repositioning Alert Modal -->
+    <div id="repositionAlertModal" class="alert-modal hidden">
+        <div class="alert-modal-content">
+            <div class="alert-modal-icon">🚨</div>
+            <h2 class="alert-modal-title">Camera Repositioning Detected</h2>
+            <p class="alert-modal-message">The surveillance camera has been actively moved. Immediate action may be required.</p>
+            <button class="alert-modal-button" onclick="dismissRepositionAlert()">DISMISS ALERT</button>
+        </div>
+    </div>
 
     <!-- Socket.IO Client Library -->
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>

@@ -11,19 +11,65 @@ const statusBadge = document.getElementById('statusBadge');
 const alertBanner = document.getElementById('alertBanner');
 const alertMessage = document.querySelector('.alert-message');
 const detectionLog = document.getElementById('detectionLog');
+const subtitleLog = document.getElementById('subtitleLog');
+const audioIndicator = document.getElementById('audioIndicator');
 const rawFeed = document.getElementById('rawFeed');
 const processedFeed = document.getElementById('processedFeed');
 
 // Metric elements
 const blurValue = document.getElementById('blurValue');
 const shakeValue = document.getElementById('shakeValue');
+const repositionValue = document.getElementById('repositionValue');
 const glareValue = document.getElementById('glareValue');
 const livenessValue = document.getElementById('livenessValue');
 
 const blurIndicator = document.getElementById('blurIndicator');
 const shakeIndicator = document.getElementById('shakeIndicator');
+const repositionIndicator = document.getElementById('repositionIndicator');
 const glareIndicator = document.getElementById('glareIndicator');
 const livenessIndicator = document.getElementById('livenessIndicator');
+
+const glareHistogramContainer = document.getElementById('glareHistogram');
+const repositionAlertModal = document.getElementById('repositionAlertModal');
+const repositionDetails = document.getElementById('repositionDetails');
+
+// ============================================================================
+// HISTOGRAM VISUALIZATION
+// ============================================================================
+
+/**
+ * Update and display the glare histogram visually
+ */
+function updateGlareHistogram(histogramData, isAlert = false) {
+    // Clear previous bars
+    glareHistogramContainer.innerHTML = '';
+    
+    if (!histogramData || histogramData.length === 0) {
+        glareHistogramContainer.innerHTML = '<div style="width: 100%; text-align: center; color: #888;">No data</div>';
+        return;
+    }
+    
+    // Find max value for scaling
+    const maxValue = Math.max(...histogramData);
+    
+    // Prevent division by zero or invalid histogram
+    if (maxValue === 0 || !isFinite(maxValue)) {
+        glareHistogramContainer.innerHTML = '<div style="width: 100%; text-align: center; color: #888;">No signal</div>';
+        return;
+    }
+    
+    // Create bars for each histogram bucket
+    for (let i = 0; i < histogramData.length; i++) {
+        const bar = document.createElement('div');
+        bar.className = `bar ${isAlert ? 'alert' : ''}`;
+        
+        // Scale height proportionally (min 2px to be visible)
+        const heightPercent = (histogramData[i] / maxValue) * 100;
+        bar.style.height = `${Math.max(2, heightPercent)}%`;
+        
+        glareHistogramContainer.appendChild(bar);
+    }
+}
 
 // ============================================================================
 // STATE MANAGEMENT
@@ -32,6 +78,7 @@ const livenessIndicator = document.getElementById('livenessIndicator');
 let systemState = {
     status: 'secure',
     alerts: [],
+    repositionAlertShownThisCycle: false,  // Track if alert was already shown for current reposition event
     metrics: {
         blur: { value: 0, status: 'secure' },
         shake: { value: 0, status: 'secure' },
@@ -95,6 +142,7 @@ function updateSystemStatus(isAlert = false) {
     }
 }
 
+
 function triggerAlert(alertType, message) {
     const time = getCurrentTime();
 
@@ -102,7 +150,17 @@ function triggerAlert(alertType, message) {
     systemState.alerts.push({ type: alertType, time, message });
     updateSystemStatus(true);
     addLogEntry(`${alertType}: ${message}`, 'alert');
-    playAlertSound();
+}
+
+function showRepositionAlert() {
+    repositionAlertModal.classList.remove('hidden');
+}
+
+function dismissRepositionAlert() {
+    repositionAlertModal.classList.add('hidden');
+    systemState.repositionAlertShownThisCycle = false;  // Reset flag
+    // Tell backend that alert was dismissed so it can reset tracking
+    socket.emit('dismiss_reposition_alert');
 }
 
 function checkAndClearAlerts() {
@@ -121,27 +179,18 @@ function checkAndClearAlerts() {
     }
 }
 
-function playAlertSound() {
-    try {
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const oscillator = audioContext.createOscillator();
-        const gainNode = audioContext.createGain();
-
-        oscillator.connect(gainNode);
-        gainNode.connect(audioContext.destination);
-
-        oscillator.frequency.value = 800;
-        oscillator.type = 'sine';
-
-        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
-
-        oscillator.start(audioContext.currentTime);
-        oscillator.stop(audioContext.currentTime + 0.1);
-    } catch (e) {
-        console.log('Audio context not available');
+function updateAudioIndicator(isRecording) {
+    const indicator = document.getElementById('audioIndicator');
+    if (isRecording) {
+        indicator.classList.add('recording');
+        indicator.querySelector('.recording-text').textContent = 'Audio Logging: ON';
+    } else {
+        indicator.classList.remove('recording');
+        indicator.querySelector('.recording-text').textContent = 'Audio Logging: OFF';
     }
 }
+
+
 
 // ============================================================================
 // SOCKET.IO EVENT HANDLERS
@@ -175,16 +224,40 @@ socket.on('detection_update', (data) => {
         updateMetric('shake', data.shake.magnitude || 0, shakeStatus);
 
         if (data.shake.detected) {
-            triggerAlert('SHAKE', 'Camera Shake Detected!');
+            triggerAlert('SHAKE', '⚠️ Camera Vibration Detected - Minor Movement');
+        }
+    }
+
+    if (data.reposition) {
+        if (data.reposition.alert_active && !systemState.repositionAlertShownThisCycle) {
+            // Only show alert once per repositioning event
+            systemState.repositionAlertShownThisCycle = true;
+            showRepositionAlert();
+            triggerAlert('REPOSITION', '🚨 CAMERA REPOSITIONING DETECTED - SUSTAINED MOVEMENT!');
+        } else if (!data.reposition.alert_active) {
+            // Reset flag when alert clears
+            systemState.repositionAlertShownThisCycle = false;
         }
     }
 
     if (data.glare) {
         const glareStatus = data.glare.detected ? 'alert' : 'secure';
-        updateMetric('glare', data.glare.detected ? 1 : 0, glareStatus);
+        
+        // Show percentage value
+        glareValue.textContent = data.glare.percentage ? data.glare.percentage.toFixed(1) + '%' : '-';
+        
+        // Update histogram visualization
+        if (data.glare.histogram) {
+            systemState.metrics.glare.histogram = data.glare.histogram;
+            updateGlareHistogram(data.glare.histogram, data.glare.detected);
+        }
+        
+        // Update indicator
+        glareIndicator.classList.remove('secure', 'alert', 'warning');
+        glareIndicator.classList.add(glareStatus);
 
         if (data.glare.detected) {
-            triggerAlert('GLARE', 'Critical Threat: Glare Attack Detected!');
+            triggerAlert('GLARE', `Critical Threat: Glare Detected (${data.glare.percentage.toFixed(1)}%)!`);
         }
     }
 
@@ -203,6 +276,34 @@ socket.on('detection_update', (data) => {
 socket.on('alert', (data) => {
     console.log('Alert received:', data);
     triggerAlert(data.type || 'SYSTEM', data.message || 'Unknown alert');
+    
+    // If it's an audio logging alert, update the indicator
+    if (data.type === 'AUDIO_LOGGING') {
+        updateAudioIndicator(true);
+    }
+});
+
+socket.on('subtitle', (data) => {
+    console.log('Subtitle received:', data);
+    const time = getCurrentTime();
+    const subtitleEntry = document.createElement('div');
+    subtitleEntry.className = `log-entry ${data.is_blackbox ? 'warning' : 'secure'}`;
+    subtitleEntry.innerHTML = `
+        <span class="log-time">${time}</span>
+        <span class="log-message">[${data.type}] ${data.text}</span>
+    `;
+    
+    subtitleLog.insertBefore(subtitleEntry, subtitleLog.firstChild);
+    
+    // Keep only last 30 entries
+    while (subtitleLog.children.length > 30) {
+        subtitleLog.removeChild(subtitleLog.lastChild);
+    }
+});
+
+socket.on('alert_clear', () => {
+    console.log('Alert cleared');
+    updateAudioIndicator(false);
 });
 
 socket.on('status_update', (data) => {
@@ -264,6 +365,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
     addLogEntry('Aegis system initialized', 'secure');
     addLogEntry('Connecting to camera feed...', 'secure');
+    
+    // Setup tab switching
+    document.querySelectorAll('.tab-button').forEach(button => {
+        button.addEventListener('click', () => {
+            const tabName = button.dataset.tab;
+            
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Remove active state from all buttons
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(tabName).classList.add('active');
+            button.classList.add('active');
+        });
+    });
 
     startVideoStream();
 });
@@ -278,6 +400,41 @@ function startVideoStream() {
         const timestamp = new Date().getTime();
         processedFeed.src = `/processed_frame?t=${timestamp}`;
     }, 100);
+    
+    // Poll the HTTP API for detection data as fallback
+    setInterval(() => {
+        fetch('/api/detection')
+            .then(response => {
+                if (!response.ok) throw new Error('Network response was not ok');
+                return response.json();
+            })
+            .then(data => {
+                console.log('Detection data from API:', data);
+                
+                if (data.blur) {
+                    const blurStatus = data.blur.detected ? 'alert' : 'secure';
+                    updateMetric('blur', data.blur.variance || 0, blurStatus);
+                }
+
+                if (data.shake) {
+                    const shakeStatus = data.shake.detected ? 'alert' : 'secure';
+                    updateMetric('shake', data.shake.magnitude || 0, shakeStatus);
+                }
+
+                if (data.glare) {
+                    const glareStatus = data.glare.detected ? 'alert' : 'secure';
+                    updateMetric('glare', data.glare.detected ? 1 : 0, glareStatus);
+                }
+
+                if (data.liveness) {
+                    const livenessStatus = data.liveness.frozen ? 'alert' : 'secure';
+                    updateMetric('liveness', data.liveness.frozen ? 0 : 1, livenessStatus);
+                }
+            })
+            .catch(error => {
+                // Silently fail - Socket.IO should handle this
+            });
+    }, 200);
 }
 
 if (typeof module !== 'undefined' && module.exports) {

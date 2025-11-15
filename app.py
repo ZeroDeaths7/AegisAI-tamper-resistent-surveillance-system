@@ -7,34 +7,45 @@ from flask import Flask, render_template, Response, send_from_directory
 from flask_socketio import SocketIO, emit
 import cv2
 import numpy as np
-import Tamper.tamper_detector as tamper_detector
+import tamper_detector
+from tamper_detector import fix_blur_unsharp_mask
 import os
 import threading
 import time
+import speech_recognition
 
 # ============================================================================
 # INITIALIZATION
 # ============================================================================
 
 app = Flask(__name__, 
-            template_folder='./Frontend',
-            static_folder='./Frontend',
+            template_folder='./frontend',
+            static_folder='./frontend',
             static_url_path='')
 
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Configuration
 BLUR_THRESHOLD = 100.0
-SHAKE_THRESHOLD = 1.1
+SHAKE_THRESHOLD = 6.0
+REPOSITION_THRESHOLD = 5.0  # Threshold for directional shift magnitude - lower for easier detection
 CAMERA_INDEX = 0
+BLUR_FIX_ENABLED = True
+BLUR_FIX_STRENGTH = 5
 
 # Global variables
 cap = None
 prev_gray = None
-current_frame_raw = None  # Raw frame without text
-current_frame_processed = None  # Frame with detection text
+current_frame = None  # Raw frame without text
+processed_frame = None  # Frame with detection text
 frame_lock = None
-detection_data_cache = None  # Cache for detection data
+reposition_alert_active = False
+reposition_alert_shown = False  # Track if we've already shown the alert for this event
+reposition_alert_frames = 0
+
+# Audio logging globals
+LOG_AUDIO_SUBTITLES = False
+detection_data_cache = None
 
 # ============================================================================
 # CAMERA AND DETECTION FUNCTIONS
@@ -59,12 +70,59 @@ def initialize_camera():
     print("Camera initialized successfully.")
     return True
 
+def audio_logging_thread():
+    """
+    Audio logging thread that continuously listens for speech when triggered.
+    Runs in a separate daemon thread and sends recognized speech to the frontend.
+    """
+    global LOG_AUDIO_SUBTITLES
+    
+    r = speech_recognition.Recognizer()
+    print("Audio logger thread started.")
+    
+    while True:
+        if LOG_AUDIO_SUBTITLES:
+            try:
+                with speech_recognition.Microphone() as source:
+                    print("[AUDIO] Listening for speech...")
+                    audio = r.listen(source, timeout=3, phrase_time_limit=5)
+                    print("[AUDIO] Audio received, recognizing...")
+                
+                try:
+                    text = r.recognize_google(audio)
+                    print(f"[AUDIO] Recognized speech: {text}")
+                    
+                    # Send the subtitle to the frontend
+                    try:
+                        with app.app_context():
+                            socketio.emit('subtitle', {
+                                'type': 'SPEECH',
+                                'text': text,
+                                'is_blackbox': False
+                            }, namespace='/', skip_sid=None)
+                            print(f"[AUDIO] ✓ Subtitle emitted: {text}")
+                    except Exception as e:
+                        print(f"[AUDIO] ✗ Error emitting subtitle: {e}")
+                except speech_recognition.UnknownValueError:
+                    print("[AUDIO] Could not understand audio")
+                except speech_recognition.RequestError as e:
+                    print(f"[AUDIO] API Error: {e}")
+                
+            except speech_recognition.WaitTimeoutError:
+                print("[AUDIO] No speech detected (timeout)")
+            except speech_recognition.MicrophoneError as e:
+                print(f"[AUDIO] Microphone error: {e}")
+            except Exception as e:
+                print(f"[AUDIO] ✗ Error: {e}")
+        else:
+            time.sleep(1)  # Sleep when not logging
+
 def camera_thread():
     """
     Continuously capture frames and run detections.
     This runs in a separate thread to avoid blocking.
     """
-    global prev_gray, current_frame_raw, current_frame_processed, frame_lock, detection_data_cache
+    global prev_gray, current_frame, processed_frame, frame_lock, detection_data_cache
     
     ret, first_frame = cap.read()
     if not ret:
@@ -88,6 +146,32 @@ def camera_thread():
         # --- RUN DETECTIONS ---
         is_blurred, blur_variance = tamper_detector.check_blur(gray, threshold=BLUR_THRESHOLD)
         is_shaken, shake_magnitude = tamper_detector.check_shake(gray, prev_gray, threshold=SHAKE_THRESHOLD)
+        is_repositioned, shift_magnitude, shift_x, shift_y = tamper_detector.detect_camera_reposition(
+            gray, prev_gray, threshold_shift=REPOSITION_THRESHOLD
+        )
+        is_glare, glare_percentage, glare_histogram = tamper_detector.check_glare(frame, threshold_pct=10.0)
+        
+        # Determine if ANY tamper is detected (for audio logging trigger)
+        any_tamper_detected = is_blurred or is_shaken or is_glare
+        
+        # Manage repositioning alert state
+        global reposition_alert_active, reposition_alert_shown, reposition_alert_frames
+        if is_repositioned:
+            reposition_alert_frames = 0
+            # Only set alert_active ONCE per repositioning event
+            if not reposition_alert_shown:
+                reposition_alert_shown = True
+                reposition_alert_active = True  # Send alert to frontend ONLY on first detection
+                print(f"🚨 REPOSITION DETECTED - Magnitude: {shift_magnitude:.2f}px, Shift: ({shift_x:.2f}, {shift_y:.2f})")
+            else:
+                # Motion still detected but we've already shown alert, keep it inactive
+                reposition_alert_active = False
+        else:
+            reposition_alert_frames += 1
+            if reposition_alert_frames > 30:  # Clear alert after 30 frames without detection
+                reposition_alert_shown = False  # Reset flag when motion fully stops
+            # Always keep alert inactive when motion isn't detected
+            reposition_alert_active = False
         
         # Prepare detection data for frontend
         detection_data = {
@@ -99,9 +183,17 @@ def camera_thread():
                 'detected': bool(is_shaken),
                 'magnitude': float(shake_magnitude)
             },
+            'reposition': {
+                'detected': bool(is_repositioned),
+                'magnitude': float(shift_magnitude),
+                'shift_x': float(shift_x),
+                'shift_y': float(shift_y),
+                'alert_active': bool(reposition_alert_active)
+            },
             'glare': {
-                'detected': False,
-                'value': 0
+                'detected': bool(is_glare),
+                'percentage': float(glare_percentage),
+                'histogram': glare_histogram.tolist() if glare_histogram is not None and hasattr(glare_histogram, 'tolist') else (list(glare_histogram) if glare_histogram else [])
             },
             'liveness': {
                 'frozen': False,
@@ -109,46 +201,69 @@ def camera_thread():
             }
         }
         
+        # --- AUDIO LOGGING TRIGGER ---
+        # Audio logging is triggered when ANY tamper (blur, shake, glare) is detected
+        global LOG_AUDIO_SUBTITLES
+        if any_tamper_detected:
+            if not LOG_AUDIO_SUBTITLES:
+                LOG_AUDIO_SUBTITLES = True
+                print(f"[TRIGGER] ✓ Audio logging ENABLED (tampering detected)")
+                try:
+                    with app.app_context():
+                        socketio.emit('alert', {
+                            'type': 'AUDIO_LOGGING',
+                            'message': 'ALERT: TAMPER DETECTED! Audio logging engaged.'
+                        }, namespace='/', skip_sid=None)
+                except Exception as e:
+                    print(f"[TRIGGER] ✗ Error emitting alert: {e}")
+        else:
+            if LOG_AUDIO_SUBTITLES:
+                LOG_AUDIO_SUBTITLES = False
+                print(f"[TRIGGER] ✓ Audio logging DISABLED (tampering cleared)")
+                try:
+                    with app.app_context():
+                        socketio.emit('alert_clear', {}, namespace='/', skip_sid=None)
+                except Exception as e:
+                    print(f"[TRIGGER] ✗ Error emitting alert_clear: {e}")
+        
         # Cache detection data
         detection_data_cache = detection_data
         
         # Emit detection update to all connected clients
         try:
-            socketio.server.emit('detection_update', detection_data, broadcast=True)
+            with app.app_context():
+                socketio.emit('detection_update', detection_data, namespace='/', skip_sid=None)
+            if frame_count % 30 == 0:
+                print(f"Emitted detection data: Blur={blur_variance:.2f}, Shake={shake_magnitude:.2f}, Glare={glare_percentage:.2f}%")
         except Exception as e:
-            pass
+            print(f"Error emitting detection data: {e}")
         
-        # Create processed frame with detection text
-        frame_with_text = frame.copy()
-        
-        # Blur status with color
-        blur_status = "BLURRY" if is_blurred else "SHARP"
-        blur_color = (0, 0, 255) if is_blurred else (0, 255, 0)  # Red or Green
-        
-        # Shake status with color
-        shake_status = "SHAKE" if is_shaken else "STABLE"
-        shake_color = (0, 255, 255) if not is_shaken else (0, 0, 255)  # Bright Yellow or Red
-        
-        # Add text to the processed frame
-        cv2.putText(frame_with_text, f"Blur: {blur_status}",
-                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, blur_color, 2)
-        
-        cv2.putText(frame_with_text, f"Shake: {shake_status}",
-                    (300, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, shake_color, 2)
-        
-        cv2.putText(frame_with_text, f"Blur Variance: {blur_variance:.2f} (Th: {BLUR_THRESHOLD:.0f})",
-                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        
-        cv2.putText(frame_with_text, f"Shake Magnitude: {shake_magnitude:.2f} (Th: {SHAKE_THRESHOLD:.1f})",
-                    (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        # Create processed frame with blur fixing
+        if BLUR_FIX_ENABLED:
+            # Always apply unsharp masking, but dynamically adjust strength based on blur variance
+            # Lower variance = more blurry = higher strength
+            # Variance range: typically 0-300+
+            # Map to strength range: 5.0 to 8.5 (higher base for inherently blurry camera)
+            if blur_variance < 50:
+                dynamic_strength = 8.5  # Very blurry - maximum sharpening
+            elif blur_variance < 100:
+                dynamic_strength = 3 + (100 - blur_variance) / 8  # Scale between 5.0-8.5
+            else:
+                dynamic_strength = max(3, 8.5 - (blur_variance - 100) / 40)  # Scale down, but keep at 5.0 minimum
+            
+            # Apply unsharp masking with dynamic strength
+            frame_with_text = fix_blur_unsharp_mask(frame, kernel_size=5, sigma=1.0, strength=dynamic_strength)
+        else:
+            # Blur fix disabled, use original frame
+            frame_with_text = frame.copy()
         
         # Update previous frame
         prev_gray = gray
         
         # Store frames for streaming
         with frame_lock:
-            current_frame_raw = frame.copy()  # Raw frame without text
-            current_frame_processed = frame_with_text.copy()  # Frame with detection text
+            current_frame = frame.copy()  # Raw unmodified frame
+            processed_frame = frame_with_text.copy()  # Frame with blur fix applied if needed
         
         # Small delay to prevent CPU overload
         if frame_count % 10 == 0:
@@ -197,15 +312,18 @@ def index():
 @app.route('/video_frame')
 def video_frame():
     """Serve a single JPEG frame from the raw feed (without detection text)."""
-    global current_frame_raw, frame_lock
+    global current_frame, frame_lock
     
-    if current_frame_raw is None:
+    if current_frame is None or frame_lock is None:
         return "No frame available", 503
     
-    with frame_lock:
-        if current_frame_raw is None:
-            return "No frame available", 503
-        frame = current_frame_raw.copy()
+    try:
+        with frame_lock:
+            if current_frame is None:
+                return "No frame available", 503
+            frame = current_frame.copy()
+    except:
+        return "Error accessing frame", 500
     
     # Encode frame as JPEG
     ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -215,17 +333,20 @@ def video_frame():
     return Response(buffer.tobytes(), mimetype='image/jpeg')
 
 @app.route('/processed_frame')
-def processed_frame():
+def get_processed_frame():
     """Serve a single JPEG frame from the processed feed (with detection text)."""
-    global current_frame_processed, frame_lock
+    global processed_frame, frame_lock
     
-    if current_frame_processed is None:
+    if processed_frame is None or frame_lock is None:
         return "No frame available", 503
     
-    with frame_lock:
-        if current_frame_processed is None:
-            return "No frame available", 503
-        frame = current_frame_processed.copy()
+    try:
+        with frame_lock:
+            if processed_frame is None:
+                return "No frame available", 503
+            frame = processed_frame.copy()
+    except:
+        return "Error accessing frame", 500
     
     # Encode frame as JPEG
     ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -233,6 +354,16 @@ def processed_frame():
         return "Could not encode frame", 500
     
     return Response(buffer.tobytes(), mimetype='image/jpeg')
+
+@app.route('/api/detection')
+def get_detection():
+    """Get the latest detection data as JSON."""
+    global detection_data_cache
+    
+    if detection_data_cache is None:
+        return {"error": "No detection data available"}, 503
+    
+    return detection_data_cache
 
 @app.route('/video_feed')
 def video_feed():
@@ -279,6 +410,13 @@ def handle_test_alert(data):
         'message': data.get('message', 'Test alert from server')
     }, broadcast=True)
 
+@socketio.on('dismiss_reposition_alert')
+def handle_dismiss_reposition_alert():
+    """Handle reposition alert dismissal from frontend."""
+    global reposition_alert_shown
+    reposition_alert_shown = False
+    print("Reposition alert dismissed by user")
+
 # ============================================================================
 # STARTUP AND SHUTDOWN
 # ============================================================================
@@ -300,6 +438,11 @@ def startup():
 
 if __name__ == '__main__':
     if startup():
+        # Start audio logging thread
+        audio_thread = threading.Thread(target=audio_logging_thread, daemon=True)
+        audio_thread.start()
+        print("Audio logging thread started.")
+        
         # Start camera thread
         camera_thread_obj = threading.Thread(target=camera_thread, daemon=True)
         camera_thread_obj.start()

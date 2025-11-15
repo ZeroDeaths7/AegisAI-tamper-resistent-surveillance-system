@@ -2,3 +2,5 @@ opencv-python
 numpy
 Flask
 Flask-SocketIO
+SpeechRecognition
+PyAudio

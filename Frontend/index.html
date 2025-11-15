@@ -42,166 +42,140 @@
 
         <!-- System Status & Alert Console -->
         <section class="console-section">
-            <!-- Live Status Indicator -->
-            <div class="status-container">
-                <div class="status-badge secure" id="statusBadge">
-                    <span class="status-pulse"></span>
-                    STATUS: SECURE
-                </div>
-                <!-- Audio Logging Indicator -->
-                <div class="audio-recording-indicator" id="audioIndicator">
-                    <span class="recording-light"></span>
-                    <span class="recording-text">Audio Logging: OFF</span>
-                </div>
-            </div>
-
-            <!-- Real-time Alert Banner -->
+            <!-- Real-time Alert Banner (full width) -->
             <div class="alert-banner-container">
                 <div class="alert-banner" id="alertBanner">
                     <p class="alert-message">System Active - All Sensors Online</p>
                 </div>
             </div>
 
-            <!-- Tabs Container -->
-            <div class="tabs-container">
-                <button class="tab-button active" data-tab="detection-log-tab">Detection Log</button>
-                <button class="tab-button" data-tab="audio-log-tab">Audio Log</button>
-                <button class="tab-button" data-tab="settings-tab">Settings</button>
+            <!-- Status and Audio Logging Row -->
+            <div class="status-audio-row">
+                <div class="status-container">
+                    <div class="status-badge secure" id="statusBadge">
+                        <span class="status-pulse"></span>
+                        STATUS: SECURE
+                    </div>
+                </div>
+                <div class="audio-recording-indicator" id="audioIndicator">
+                    <span class="recording-light"></span>
+                    <span class="recording-text">Audio Logging: OFF</span>
+                </div>
             </div>
 
-            <!-- Detection Log Tab -->
-            <div id="detection-log-tab" class="tab-content active">
-                <h3 class="log-title">Detection Log</h3>
-                <div class="log-content" id="detectionLog">
-                    <div class="log-entry secure">
-                        <span class="log-time">Initializing...</span>
-                        <span class="log-message">System started</span>
+            <!-- Four Column Layout (3 columns) -->
+            <div class="four-column-layout">
+                <!-- Column 1: Detection Log -->
+                <div class="layout-column detection-log-column">
+                    <h3 class="log-title">Detection Log</h3>
+                    <div class="log-content" id="detectionLog">
+                        <div class="log-entry secure">
+                            <span class="log-time">Initializing...</span>
+                            <span class="log-message">System started</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Column 2: Audio Subtitle Log -->
+                <div class="layout-column audio-log-column">
+                    <h3 class="log-title">Audio Subtitle Log</h3>
+                    <div class="log-content" id="subtitleLog">
+                        <div class="log-entry secure">
+                            <span class="log-time">Waiting...</span>
+                            <span class="log-message">Audio logging disabled</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Column 3: Sensor Configuration -->
+                <div class="layout-column sensor-config-column">
+                    <h3 class="log-title">Sensor Configuration</h3>
+                    <div class="settings-grid-compact">
+                        <div class="sensor-setting-compact">
+                            <label for="blur-toggle" class="setting-label-compact">
+                                <input type="checkbox" id="blur-toggle" class="setting-checkbox" data-sensor="blur" checked>
+                                <span class="setting-name-compact">Blur</span>
+                            </label>
+                        </div>
+
+                        <div class="sensor-setting-compact">
+                            <label for="shake-toggle" class="setting-label-compact">
+                                <input type="checkbox" id="shake-toggle" class="setting-checkbox" data-sensor="shake" checked>
+                                <span class="setting-name-compact">Shake</span>
+                            </label>
+                        </div>
+
+                        <div class="sensor-setting-compact">
+                            <label for="glare-toggle" class="setting-label-compact">
+                                <input type="checkbox" id="glare-toggle" class="setting-checkbox" data-sensor="glare" checked>
+                                <span class="setting-name-compact">Glare</span>
+                            </label>
+                        </div>
+
+                        <div class="sensor-setting-compact">
+                            <label for="liveness-toggle" class="setting-label-compact">
+                                <input type="checkbox" id="liveness-toggle" class="setting-checkbox" data-sensor="liveness" checked>
+                                <span class="setting-name-compact">Liveness</span>
+                            </label>
+                        </div>
+
+                        <div class="sensor-setting-compact">
+                            <label for="reposition-toggle" class="setting-label-compact">
+                                <input type="checkbox" id="reposition-toggle" class="setting-checkbox" data-sensor="reposition" checked>
+                                <span class="setting-name-compact">Reposition</span>
+                            </label>
+                        </div>
+
+                        <div class="sensor-setting-compact">
+                            <label for="blur-fix-toggle" class="setting-label-compact">
+                                <input type="checkbox" id="blur-fix-toggle" class="setting-checkbox" data-sensor="blur_fix" checked>
+                                <span class="setting-name-compact">Blur Fix</span>
+                            </label>
+                        </div>
+
+                        <div class="sensor-setting-compact">
+                            <label for="glare-rescue-toggle" class="setting-label-compact">
+                                <input type="checkbox" id="glare-rescue-toggle" class="setting-checkbox" data-sensor="glare_rescue" checked>
+                                <span class="setting-name-compact">Glare Rescue</span>
+                            </label>
+                        </div>
+
+                        <div class="sensor-setting-compact">
+                            <label for="sound-toggle" class="setting-label-compact">
+                                <input type="checkbox" id="sound-toggle" class="setting-checkbox" data-sensor="audio_alerts" checked>
+                                <span class="setting-name-compact">Audio</span>
+                            </label>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Audio Log Tab -->
-            <div id="audio-log-tab" class="tab-content">
-                <h3 class="log-title">Audio Subtitle Log</h3>
-                <div class="log-content" id="subtitleLog">
-                    <div class="log-entry secure">
-                        <span class="log-time">Waiting...</span>
-                        <span class="log-message">Audio logging disabled</span>
+            <!-- Metrics Row (bottom) -->
+            <div class="metrics-row">
+                <h3 class="log-title">Real-Time Metrics</h3>
+                <div class="metrics-grid-bottom">
+                    <div class="metric-item-compact">
+                        <div class="metric-label-compact">Blur</div>
+                        <div class="metric-value-compact" id="blurValue">-</div>
+                        <div class="metric-indicator-compact" id="blurIndicator">●</div>
+                    </div>
+                    <div class="metric-item-compact">
+                        <div class="metric-label-compact">Shake</div>
+                        <div class="metric-value-compact" id="shakeValue">-</div>
+                        <div class="metric-indicator-compact" id="shakeIndicator">●</div>
+                    </div>
+                    <div class="metric-item-compact">
+                        <div class="metric-label-compact">Glare</div>
+                        <div class="metric-value-compact" id="glareValue">-</div>
+                        <div class="metric-indicator-compact" id="glareIndicator">●</div>
+                        <div class="glare-histogram" id="glareHistogram"></div>
+                    </div>
+                    <div class="metric-item-compact">
+                        <div class="metric-label-compact">Liveness</div>
+                        <div class="metric-value-compact" id="livenessValue">-</div>
+                        <div class="metric-indicator-compact" id="livenessIndicator">●</div>
                     </div>
                 </div>
-            </div>
-
-            <!-- Settings Tab -->
-            <div id="settings-tab" class="tab-content">
-                <h3 class="log-title">Sensor Configuration</h3>
-                <div class="settings-grid">
-                    <div class="sensor-setting">
-                        <label for="blur-toggle" class="setting-label">
-                            <input type="checkbox" id="blur-toggle" class="setting-checkbox" data-sensor="blur" checked>
-                            <span class="setting-name">Blur Detection</span>
-                        </label>
-                    </div>
-
-                    <div class="sensor-setting">
-                        <label for="shake-toggle" class="setting-label">
-                            <input type="checkbox" id="shake-toggle" class="setting-checkbox" data-sensor="shake" checked>
-                            <span class="setting-name">Shake Detection</span>
-                        </label>
-                    </div>
-
-                    <div class="sensor-setting">
-                        <label for="glare-toggle" class="setting-label">
-                            <input type="checkbox" id="glare-toggle" class="setting-checkbox" data-sensor="glare" checked>
-                            <span class="setting-name">Glare Detection</span>
-                        </label>
-                    </div>
-
-                    <div class="sensor-setting">
-                        <label for="liveness-toggle" class="setting-label">
-                            <input type="checkbox" id="liveness-toggle" class="setting-checkbox" data-sensor="liveness" checked>
-                            <span class="setting-name">Liveness Detection</span>
-                        </label>
-                    </div>
-
-                    <div class="sensor-setting">
-                        <label for="reposition-toggle" class="setting-label">
-                            <input type="checkbox" id="reposition-toggle" class="setting-checkbox" data-sensor="reposition" checked>
-                            <span class="setting-name">Reposition Detection</span>
-                        </label>
-                    </div>
-
-                    <div class="sensor-setting">
-                        <label for="blur-fix-toggle" class="setting-label">
-                            <input type="checkbox" id="blur-fix-toggle" class="setting-checkbox" data-sensor="blur_fix" checked>
-                            <span class="setting-name">Blur Correction</span>
-                        </label>
-                    </div>
-
-                    <div class="sensor-setting">
-                        <label for="glare-rescue-toggle" class="setting-label">
-                            <input type="checkbox" id="glare-rescue-toggle" class="setting-checkbox" data-sensor="glare_rescue" checked>
-                            <span class="setting-name">Glare Rescue</span>
-                        </label>
-                    </div>
-
-                    <div class="sensor-setting">
-                        <label for="sound-toggle" class="setting-label">
-                            <input type="checkbox" id="sound-toggle" class="setting-checkbox" data-sensor="audio_alerts" checked>
-                            <span class="setting-name">Microphone On</span>
-                        </label>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Detection Metrics Panel -->
-        <section class="metrics-section">
-            <div class="metric-item">
-                <div class="metric-header">
-                    <div class="metric-label">Blur</div>
-                    <label class="metric-toggle">
-                        <input type="checkbox" class="sensor-checkbox-inline" data-sensor="blur" checked>
-                        <span class="toggle-switch-small"></span>
-                    </label>
-                </div>
-                <div class="metric-value" id="blurValue">-</div>
-                <div class="metric-indicator" id="blurIndicator">●</div>
-            </div>
-            <div class="metric-item">
-                <div class="metric-header">
-                    <div class="metric-label">Shake</div>
-                    <label class="metric-toggle">
-                        <input type="checkbox" class="sensor-checkbox-inline" data-sensor="shake" checked>
-                        <span class="toggle-switch-small"></span>
-                    </label>
-                </div>
-                <div class="metric-value" id="shakeValue">-</div>
-                <div class="metric-indicator" id="shakeIndicator">●</div>
-            </div>
-            <div class="metric-item">
-                <div class="metric-header">
-                    <div class="metric-label">Glare</div>
-                    <label class="metric-toggle">
-                        <input type="checkbox" class="sensor-checkbox-inline" data-sensor="glare" checked>
-                        <span class="toggle-switch-small"></span>
-                    </label>
-                </div>
-                <div class="metric-value" id="glareValue">-</div>
-                <div id="glareHistogram" class="glare-histogram"></div>
-                <div class="metric-indicator" id="glareIndicator">●</div>
-            </div>
-            <div class="metric-item">
-                <div class="metric-header">
-                    <div class="metric-label">Liveness</div>
-                    <label class="metric-toggle">
-                        <input type="checkbox" class="sensor-checkbox-inline" data-sensor="liveness" checked>
-                        <span class="toggle-switch-small"></span>
-                    </label>
-                </div>
-                <div class="metric-value" id="livenessValue">-</div>
-                <div class="metric-indicator" id="livenessIndicator">●</div>
-            </div>
-        </section>
             </div>
         </section>
     </main>

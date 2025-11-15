@@ -41,7 +41,7 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 # Configuration
 BLUR_THRESHOLD = 100.0
 SHAKE_THRESHOLD = 6.0
-REPOSITION_THRESHOLD = 5.0  # Threshold for directional shift magnitude - lower for easier detection
+REPOSITION_THRESHOLD = 10.0  # Threshold for directional shift magnitude - reduced false positives
 CAMERA_INDEX = 0
 BLUR_FIX_ENABLED = True
 BLUR_FIX_STRENGTH = 5

@@ -410,28 +410,7 @@ document.addEventListener('DOMContentLoaded', () => {
     addLogEntry('Aegis system initialized', 'secure');
     addLogEntry('Connecting to camera feed...', 'secure');
     
-    // Setup tab switching
-    document.querySelectorAll('.tab-button').forEach(button => {
-        button.addEventListener('click', () => {
-            const tabName = button.dataset.tab;
-            
-            // Hide all tabs
-            document.querySelectorAll('.tab-content').forEach(tab => {
-                tab.classList.remove('active');
-            });
-            
-            // Remove active state from all buttons
-            document.querySelectorAll('.tab-button').forEach(btn => {
-                btn.classList.remove('active');
-            });
-            
-            // Show selected tab
-            document.getElementById(tabName).classList.add('active');
-            button.classList.add('active');
-        });
-    });
-
-    // Setup sensor toggle switches (both in settings tab and inline with metrics)
+    // Setup sensor toggle switches (both in settings and inline with metrics)
     document.querySelectorAll('.sensor-checkbox, .sensor-checkbox-inline, .setting-checkbox').forEach(checkbox => {
         checkbox.addEventListener('change', (e) => {
             const sensor = e.target.dataset.sensor;

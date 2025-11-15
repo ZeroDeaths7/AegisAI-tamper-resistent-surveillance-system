@@ -124,17 +124,22 @@ def fix_blur_unsharp_mask(frame, kernel_size=5, sigma=1.0, strength=1.5):
 
 # Track shift magnitude history for repositioning detection
 _shift_history = []
-_MAX_HISTORY = 5  # Track last 5 frames
+_direction_history = []  # Track direction vectors for consistency
+_MAX_HISTORY = 10  # Track last 10 frames (333ms at 30fps) for better filtering
 
-def detect_camera_reposition(gray_frame, prev_gray_frame, threshold_shift=5.0):
+def detect_camera_reposition(gray_frame, prev_gray_frame, threshold_shift=10.0):
     """
     Detects camera repositioning by analyzing sustained directional motion.
-    Distinguishes between vibrations (random/low magnitude) and repositioning (consistent directional shift).
+    Handles both slow consistent movement and fast sudden repositioning.
+    
+    Repositioning is detected when:
+    1. For slow movement: Consistent direction over 5+ frames
+    2. For fast movement: High shift magnitude even in few frames
     
     Args:
         gray_frame (numpy.ndarray): Current grayscale frame.
         prev_gray_frame (numpy.ndarray): Previous grayscale frame.
-        threshold_shift (float): Threshold for shift magnitude detection. Default 5.0.
+        threshold_shift (float): Threshold for shift magnitude detection. Default 10.0.
     
     Returns:
         tuple: (is_repositioned, shift_magnitude, shift_x, shift_y)
@@ -143,7 +148,7 @@ def detect_camera_reposition(gray_frame, prev_gray_frame, threshold_shift=5.0):
             - shift_x (float): Average horizontal motion.
             - shift_y (float): Average vertical motion.
     """
-    global _shift_history
+    global _shift_history, _direction_history
     
     h, w = gray_frame.shape
     
@@ -167,22 +172,51 @@ def detect_camera_reposition(gray_frame, prev_gray_frame, threshold_shift=5.0):
     shift_y = float(np.mean(center_flow[..., 1])) if center_flow.size > 0 else 0.0
     shift_magnitude = np.sqrt(shift_x**2 + shift_y**2)
     
-    # Track shift history to detect sustained movement
+    # Track shift history
     _shift_history.append(shift_magnitude)
     if len(_shift_history) > _MAX_HISTORY:
         _shift_history.pop(0)
     
-    # Repositioning is detected when:
-    # - Shift magnitude is above threshold
-    # - Motion is sustained for 3+ consecutive frames (not just a single spike)
-    # - This differentiates sustained camera movement from random vibrations
+    # Track direction vectors (normalized)
+    if shift_magnitude > 0.5:
+        direction = (shift_x / shift_magnitude, shift_y / shift_magnitude)
+    else:
+        direction = (0.0, 0.0)
+    _direction_history.append(direction)
+    if len(_direction_history) > _MAX_HISTORY:
+        _direction_history.pop(0)
+    
+    # Repositioning detection with dual criteria:
     is_repositioned = False
-    if len(_shift_history) >= 3:
-        # Count how many recent frames had significant shift
-        shift_count = sum(1 for s in _shift_history if s > threshold_shift)
+    
+    if len(_shift_history) >= 2:
+        # CRITERION 1: FAST REPOSITIONING
+        # Sudden large movement (fast camera reposition to new location)
+        # If current shift is very high, it's likely a fast reposition
+        fast_reposition_threshold = threshold_shift * 2.0  # 20.0 by default
+        if shift_magnitude > fast_reposition_threshold:
+            is_repositioned = True
         
-        # If 3+ of last 5 frames show significant shift, it's sustained repositioning
-        # (not just vibration noise)
-        is_repositioned = shift_count >= 3 and shift_magnitude > threshold_shift
+        # CRITERION 2: SLOW/SUSTAINED REPOSITIONING
+        # Gradual movement with consistent direction (someone slowly moving camera)
+        if len(_shift_history) >= 5:
+            # Count frames with significant shift
+            shift_count = sum(1 for s in _shift_history if s > threshold_shift)
+            
+            # Calculate direction consistency
+            high_shift_directions = [
+                _direction_history[i] for i in range(len(_direction_history))
+                if _shift_history[i] > threshold_shift * 0.5 and _direction_history[i] != (0.0, 0.0)
+            ]
+            
+            direction_consistency = 0.0
+            if len(high_shift_directions) >= 3:
+                avg_dir_x = np.mean([d[0] for d in high_shift_directions])
+                avg_dir_y = np.mean([d[1] for d in high_shift_directions])
+                direction_consistency = np.sqrt(avg_dir_x**2 + avg_dir_y**2)
+            
+            # Slow repositioning: sustained movement with consistent direction
+            if shift_count >= 4 and direction_consistency > 0.4:
+                is_repositioned = True
     
     return is_repositioned, shift_magnitude, shift_x, shift_y

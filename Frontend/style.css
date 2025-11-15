@@ -155,12 +155,18 @@ body {
 .console-section {
     background-color: #202020;
     border-radius: 8px;
-    padding: 25px 30px;
+    padding: 20px 30px;
     margin-bottom: 30px;
     border-top: 2px solid #00E5FF;
-    display: grid;
-    grid-template-columns: 200px 1fr 250px;
-    gap: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+/* Status and Audio Row */
+.status-audio-row {
+    display: flex;
+    gap: 15px;
     align-items: center;
 }
 
@@ -169,8 +175,6 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 15px;
-    flex-wrap: wrap;
 }
 
 .status-badge {
@@ -279,6 +283,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
+    width: 100%;
 }
 
 .alert-banner {
@@ -311,28 +316,48 @@ body {
     text-shadow: 0 0 10px rgba(255, 59, 59, 0.5);
 }
 
-/* Detection Log */
-.detection-log {
-    display: flex;
-    flex-direction: column;
+/* Four Column Layout */
+.four-column-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 15px;
+    margin-bottom: 15px;
 }
 
-.log-title {
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    color: #00E5FF;
+.layout-column {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(0, 229, 255, 0.15);
+    border-radius: 6px;
+    padding: 15px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    height: 250px;
+}
+
+.layout-column .log-title {
+    margin-top: 0;
     margin-bottom: 10px;
-    letter-spacing: 1px;
+    flex-shrink: 0;
+}
+
+.detection-log-column,
+.audio-log-column {
+    height: 250px;
+}
+
+.sensor-config-column {
+    height: 250px;
 }
 
 .log-content {
-    max-height: 150px;
+    flex: 1;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 5px;
     padding-right: 8px;
+    min-height: 0;
 }
 
 .log-entry {
@@ -350,6 +375,34 @@ body {
 
 .log-entry.alert {
     color: #FF3B3B;
+}
+
+.log-title {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: #00E5FF;
+    margin-bottom: 10px;
+    letter-spacing: 1px;
+}
+
+/* Metrics Row (Bottom) */
+.metrics-row {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(0, 229, 255, 0.15);
+    border-radius: 6px;
+    padding: 15px;
+}
+
+.metrics-row .log-title {
+    margin-top: 0;
+    margin-bottom: 15px;
+}
+
+.metrics-grid-bottom {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 15px;
 }
 
 .log-time {
@@ -766,6 +819,99 @@ body {
 
 .setting-checkbox:checked {
     accent-color: #00E5FF;
+}
+
+/* ============================================================================
+   COMPACT SENSOR SETTINGS GRID
+   ============================================================================ */
+
+.settings-grid-compact {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.sensor-setting-compact {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(0, 229, 255, 0.15);
+    border-radius: 6px;
+    padding: 10px;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 45px;
+}
+
+.sensor-setting-compact:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(0, 229, 255, 0.3);
+}
+
+.setting-label-compact {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+    width: 100%;
+    justify-content: center;
+}
+
+.setting-name-compact {
+    font-size: 11px;
+    font-weight: 600;
+    color: #00E5FF;
+    text-align: center;
+}
+
+.setting-checkbox {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: #00E5FF;
+}
+
+/* ============================================================================
+   COMPACT METRICS GRID
+   ============================================================================ */
+
+.metrics-grid-compact {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    flex: 1;
+    overflow-y: auto;
+}
+
+.metric-item-compact {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(0, 229, 255, 0.15);
+    border-radius: 6px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+
+.metric-label-compact {
+    font-size: 11px;
+    font-weight: 600;
+    color: #00E5FF;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.metric-value-compact {
+    font-size: 14px;
+    font-weight: bold;
+    color: #ffffff;
+}
+
+.metric-indicator-compact {
+    font-size: 12px;
+    color: #888;
 }
 
 /* ============================================================================

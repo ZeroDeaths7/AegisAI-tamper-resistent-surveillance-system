@@ -92,17 +92,17 @@ def run_live_test(camera_index, blur_thresh, shake_thresh):
             break
         # Blur controls
         elif key == ord("+") or key == ord("="):
-            blur_thresh += 50
+            blur_thresh += 10
             print(f"Blur threshold increased to: {blur_thresh}")
         elif key == ord("-"):
-            blur_thresh = max(0, blur_thresh - 50)
+            blur_thresh = max(0, blur_thresh - 10)
             print(f"Blur threshold decreased to: {blur_thresh}")
         # Shake controls
         elif key == ord("w"):
-            shake_thresh += 1.0
+            shake_thresh += 0.1
             print(f"Shake threshold increased to: {shake_thresh}")
         elif key == ord("s"):
-            shake_thresh = max(0, shake_thresh - 1.0)
+            shake_thresh = max(0, shake_thresh - 0.1)
             print(f"Shake threshold decreased to: {shake_thresh}")
 
     cap.release()

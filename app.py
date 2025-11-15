@@ -12,6 +12,7 @@ from tamper_detector import fix_blur_unsharp_mask
 import os
 import threading
 import time
+import speech_recognition
 
 # ============================================================================
 # INITIALIZATION
@@ -42,6 +43,10 @@ reposition_alert_active = False
 reposition_alert_shown = False  # Track if we've already shown the alert for this event
 reposition_alert_frames = 0
 
+# Audio logging globals
+LOG_AUDIO_SUBTITLES = False
+detection_data_cache = None
+
 # ============================================================================
 # CAMERA AND DETECTION FUNCTIONS
 # ============================================================================
@@ -64,6 +69,53 @@ def initialize_camera():
     
     print("Camera initialized successfully.")
     return True
+
+def audio_logging_thread():
+    """
+    Audio logging thread that continuously listens for speech when triggered.
+    Runs in a separate daemon thread and sends recognized speech to the frontend.
+    """
+    global LOG_AUDIO_SUBTITLES
+    
+    r = speech_recognition.Recognizer()
+    print("Audio logger thread started.")
+    
+    while True:
+        if LOG_AUDIO_SUBTITLES:
+            try:
+                with speech_recognition.Microphone() as source:
+                    print("[AUDIO] Listening for speech...")
+                    audio = r.listen(source, timeout=3, phrase_time_limit=5)
+                    print("[AUDIO] Audio received, recognizing...")
+                
+                try:
+                    text = r.recognize_google(audio)
+                    print(f"[AUDIO] Recognized speech: {text}")
+                    
+                    # Send the subtitle to the frontend
+                    try:
+                        with app.app_context():
+                            socketio.emit('subtitle', {
+                                'type': 'SPEECH',
+                                'text': text,
+                                'is_blackbox': False
+                            }, namespace='/', skip_sid=None)
+                            print(f"[AUDIO] ✓ Subtitle emitted: {text}")
+                    except Exception as e:
+                        print(f"[AUDIO] ✗ Error emitting subtitle: {e}")
+                except speech_recognition.UnknownValueError:
+                    print("[AUDIO] Could not understand audio")
+                except speech_recognition.RequestError as e:
+                    print(f"[AUDIO] API Error: {e}")
+                
+            except speech_recognition.WaitTimeoutError:
+                print("[AUDIO] No speech detected (timeout)")
+            except speech_recognition.MicrophoneError as e:
+                print(f"[AUDIO] Microphone error: {e}")
+            except Exception as e:
+                print(f"[AUDIO] ✗ Error: {e}")
+        else:
+            time.sleep(1)  # Sleep when not logging
 
 def camera_thread():
     """
@@ -98,6 +150,9 @@ def camera_thread():
             gray, prev_gray, threshold_shift=REPOSITION_THRESHOLD
         )
         is_glare, glare_percentage, glare_histogram = tamper_detector.check_glare(frame, threshold_pct=10.0)
+        
+        # Determine if ANY tamper is detected (for audio logging trigger)
+        any_tamper_detected = is_blurred or is_shaken or is_glare
         
         # Manage repositioning alert state
         global reposition_alert_active, reposition_alert_shown, reposition_alert_frames
@@ -138,13 +193,38 @@ def camera_thread():
             'glare': {
                 'detected': bool(is_glare),
                 'percentage': float(glare_percentage),
-                'histogram': glare_histogram
+                'histogram': glare_histogram.tolist() if glare_histogram is not None and hasattr(glare_histogram, 'tolist') else (list(glare_histogram) if glare_histogram else [])
             },
             'liveness': {
                 'frozen': False,
                 'value': 1
             }
         }
+        
+        # --- AUDIO LOGGING TRIGGER ---
+        # Audio logging is triggered when ANY tamper (blur, shake, glare) is detected
+        global LOG_AUDIO_SUBTITLES
+        if any_tamper_detected:
+            if not LOG_AUDIO_SUBTITLES:
+                LOG_AUDIO_SUBTITLES = True
+                print(f"[TRIGGER] ✓ Audio logging ENABLED (tampering detected)")
+                try:
+                    with app.app_context():
+                        socketio.emit('alert', {
+                            'type': 'AUDIO_LOGGING',
+                            'message': 'ALERT: TAMPER DETECTED! Audio logging engaged.'
+                        }, namespace='/', skip_sid=None)
+                except Exception as e:
+                    print(f"[TRIGGER] ✗ Error emitting alert: {e}")
+        else:
+            if LOG_AUDIO_SUBTITLES:
+                LOG_AUDIO_SUBTITLES = False
+                print(f"[TRIGGER] ✓ Audio logging DISABLED (tampering cleared)")
+                try:
+                    with app.app_context():
+                        socketio.emit('alert_clear', {}, namespace='/', skip_sid=None)
+                except Exception as e:
+                    print(f"[TRIGGER] ✗ Error emitting alert_clear: {e}")
         
         # Cache detection data
         detection_data_cache = detection_data
@@ -358,6 +438,11 @@ def startup():
 
 if __name__ == '__main__':
     if startup():
+        # Start audio logging thread
+        audio_thread = threading.Thread(target=audio_logging_thread, daemon=True)
+        audio_thread.start()
+        print("Audio logging thread started.")
+        
         # Start camera thread
         camera_thread_obj = threading.Thread(target=camera_thread, daemon=True)
         camera_thread_obj.start()

@@ -11,6 +11,8 @@ const statusBadge = document.getElementById('statusBadge');
 const alertBanner = document.getElementById('alertBanner');
 const alertMessage = document.querySelector('.alert-message');
 const detectionLog = document.getElementById('detectionLog');
+const subtitleLog = document.getElementById('subtitleLog');
+const audioIndicator = document.getElementById('audioIndicator');
 const rawFeed = document.getElementById('rawFeed');
 const processedFeed = document.getElementById('processedFeed');
 
@@ -49,6 +51,12 @@ function updateGlareHistogram(histogramData, isAlert = false) {
     
     // Find max value for scaling
     const maxValue = Math.max(...histogramData);
+    
+    // Prevent division by zero or invalid histogram
+    if (maxValue === 0 || !isFinite(maxValue)) {
+        glareHistogramContainer.innerHTML = '<div style="width: 100%; text-align: center; color: #888;">No signal</div>';
+        return;
+    }
     
     // Create bars for each histogram bucket
     for (let i = 0; i < histogramData.length; i++) {
@@ -171,6 +179,17 @@ function checkAndClearAlerts() {
     }
 }
 
+function updateAudioIndicator(isRecording) {
+    const indicator = document.getElementById('audioIndicator');
+    if (isRecording) {
+        indicator.classList.add('recording');
+        indicator.querySelector('.recording-text').textContent = 'Audio Logging: ON';
+    } else {
+        indicator.classList.remove('recording');
+        indicator.querySelector('.recording-text').textContent = 'Audio Logging: OFF';
+    }
+}
+
 
 
 // ============================================================================
@@ -257,6 +276,34 @@ socket.on('detection_update', (data) => {
 socket.on('alert', (data) => {
     console.log('Alert received:', data);
     triggerAlert(data.type || 'SYSTEM', data.message || 'Unknown alert');
+    
+    // If it's an audio logging alert, update the indicator
+    if (data.type === 'AUDIO_LOGGING') {
+        updateAudioIndicator(true);
+    }
+});
+
+socket.on('subtitle', (data) => {
+    console.log('Subtitle received:', data);
+    const time = getCurrentTime();
+    const subtitleEntry = document.createElement('div');
+    subtitleEntry.className = `log-entry ${data.is_blackbox ? 'warning' : 'secure'}`;
+    subtitleEntry.innerHTML = `
+        <span class="log-time">${time}</span>
+        <span class="log-message">[${data.type}] ${data.text}</span>
+    `;
+    
+    subtitleLog.insertBefore(subtitleEntry, subtitleLog.firstChild);
+    
+    // Keep only last 30 entries
+    while (subtitleLog.children.length > 30) {
+        subtitleLog.removeChild(subtitleLog.lastChild);
+    }
+});
+
+socket.on('alert_clear', () => {
+    console.log('Alert cleared');
+    updateAudioIndicator(false);
 });
 
 socket.on('status_update', (data) => {
@@ -318,6 +365,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
     addLogEntry('Aegis system initialized', 'secure');
     addLogEntry('Connecting to camera feed...', 'secure');
+    
+    // Setup tab switching
+    document.querySelectorAll('.tab-button').forEach(button => {
+        button.addEventListener('click', () => {
+            const tabName = button.dataset.tab;
+            
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Remove active state from all buttons
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(tabName).classList.add('active');
+            button.classList.add('active');
+        });
+    });
 
     startVideoStream();
 });

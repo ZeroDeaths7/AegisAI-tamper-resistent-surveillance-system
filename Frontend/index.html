@@ -48,6 +48,11 @@
                     <span class="status-pulse"></span>
                     STATUS: SECURE
                 </div>
+                <!-- Audio Logging Indicator -->
+                <div class="audio-recording-indicator" id="audioIndicator">
+                    <span class="recording-light"></span>
+                    <span class="recording-text">Audio Logging: OFF</span>
+                </div>
             </div>
 
             <!-- Real-time Alert Banner -->
@@ -57,13 +62,30 @@
                 </div>
             </div>
 
-            <!-- Detection Log -->
-            <div class="detection-log">
+            <!-- Tabs Container -->
+            <div class="tabs-container">
+                <button class="tab-button active" data-tab="detection-log-tab">Detection Log</button>
+                <button class="tab-button" data-tab="audio-log-tab">Audio Log</button>
+            </div>
+
+            <!-- Detection Log Tab -->
+            <div id="detection-log-tab" class="tab-content active">
                 <h3 class="log-title">Detection Log</h3>
                 <div class="log-content" id="detectionLog">
                     <div class="log-entry secure">
                         <span class="log-time">Initializing...</span>
                         <span class="log-message">System started</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Audio Log Tab -->
+            <div id="audio-log-tab" class="tab-content">
+                <h3 class="log-title">Audio Subtitle Log</h3>
+                <div class="log-content" id="subtitleLog">
+                    <div class="log-entry secure">
+                        <span class="log-time">Waiting...</span>
+                        <span class="log-message">Audio logging disabled</span>
                     </div>
                 </div>
             </div>

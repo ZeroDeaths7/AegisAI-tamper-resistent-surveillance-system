@@ -169,6 +169,8 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
+    gap: 15px;
+    flex-wrap: wrap;
 }
 
 .status-badge {
@@ -217,6 +219,59 @@ body {
         opacity: 0.5;
         transform: scale(1.2);
     }
+}
+
+/* Audio Recording Indicator */
+.audio-recording-indicator {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 20px;
+    border-radius: 25px;
+    font-weight: bold;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    background-color: rgba(100, 100, 100, 0.2);
+    border: 2px solid #666666;
+    color: #888888;
+    transition: all 0.3s ease;
+}
+
+.audio-recording-indicator.recording {
+    background-color: rgba(255, 59, 59, 0.2);
+    border: 2px solid #FF3B3B;
+    color: #FF3B3B;
+    box-shadow: 0 0 15px rgba(255, 59, 59, 0.3);
+}
+
+.recording-light {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: #666666;
+    transition: all 0.3s ease;
+}
+
+.audio-recording-indicator.recording .recording-light {
+    background-color: #FF3B3B;
+    animation: pulse-red 1s ease-in-out infinite;
+}
+
+@keyframes pulse-red {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.5;
+        transform: scale(1.3);
+    }
+}
+
+.recording-text {
+    display: inline-block;
 }
 
 /* Alert Banner */
@@ -272,7 +327,7 @@ body {
 }
 
 .log-content {
-    max-height: 80px;
+    max-height: 150px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
@@ -325,6 +380,50 @@ body {
 
 .log-content::-webkit-scrollbar-thumb:hover {
     background: rgba(0, 229, 255, 0.5);
+}
+
+/* Tabs Container */
+.tabs-container {
+    display: flex;
+    gap: 10px;
+    border-bottom: 2px solid rgba(0, 229, 255, 0.2);
+    margin: 15px 0 10px 0;
+}
+
+.tab-button {
+    padding: 10px 15px;
+    background: none;
+    border: none;
+    color: #888888;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border-bottom: 3px solid transparent;
+    position: relative;
+    bottom: -2px;
+}
+
+.tab-button:hover {
+    color: #00E5FF;
+}
+
+.tab-button.active {
+    color: #00E5FF;
+    border-bottom-color: #00E5FF;
+}
+
+/* Tab Content */
+.tab-content {
+    display: none;
+    animation: slideIn 0.3s ease;
+}
+
+.tab-content.active {
+    display: flex;
+    flex-direction: column;
 }
 
 /* ============================================================================

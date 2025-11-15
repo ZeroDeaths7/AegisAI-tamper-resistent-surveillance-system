@@ -439,14 +439,15 @@ def camera_thread():
         # Cache detection data
         detection_data_cache = detection_data
         
-        # Emit detection update to all connected clients
-        try:
-            with app.app_context():
-                socketio.emit('detection_update', detection_data, namespace='/', skip_sid=None)
-            if frame_count % 30 == 0:
-                print(f"Emitted detection data: Blur={blur_variance:.2f}, Shake={shake_magnitude:.2f}, Dark%={dark_pct:.1f}")
-        except Exception as e:
-            print(f"Error emitting detection data: {e}")
+        # Emit detection update to all connected clients (every 3 frames to reduce jank)
+        if frame_count % 3 == 0:
+            try:
+                with app.app_context():
+                    socketio.emit('detection_update', detection_data, namespace='/', skip_sid=None)
+                if frame_count % 30 == 0:
+                    print(f"Emitted detection data: Blur={blur_variance:.2f}, Shake={shake_magnitude:.2f}, Dark%={dark_pct:.1f}")
+            except Exception as e:
+                print(f"Error emitting detection data: {e}")
         
         # --- GLARE RESCUE (Applied FIRST, before blur fixing) ---
         frame_for_processing = frame.copy()  # Start with original frame
@@ -454,7 +455,8 @@ def camera_thread():
         # <--- FIX 5: Replaced rescue block with your tuned CLAHE pipeline ---
         if is_glare and sensor_enabled['glare_rescue'] and clahe is not None:
             try:
-                current_mode = sensor_enabled.get('glare_rescue_mode', 'CLAHE')
+                with sensor_config_lock:
+                    current_mode = sensor_config.get('glare_rescue_mode', 'CLAHE')
                 print(f"[GLARE] Applying glare rescue (mode: {current_mode})...")
 
                 if current_mode == 'CLAHE':
@@ -495,7 +497,7 @@ def camera_thread():
                 frame_for_processing = frame.copy()
         
         # Create processed frame with blur fixing (applied AFTER glare rescue)
-        if BLUR_FIX_ENABLED and sensor_enabled['blur_fix']:
+        if sensor_enabled['blur_fix']:
             # Always apply unsharp masking, but dynamically adjust strength
             if blur_variance < 50:
                 dynamic_strength = 8.5  # Very blurry - maximum sharpening
@@ -836,8 +838,9 @@ def handle_set_sensor_enabled(data):
         with sensor_config_lock:
             sensor_config[sensor] = enabled
         print(f"Sensor '{sensor}' set to {enabled}")
-        emit('status_update', {'status': 'healthy', 'message': f'{sensor} toggled to {enabled}'})
-        emit('sensor_states', sensor_config) # Send update back
+        # Broadcast sensor state update to all connected clients
+        emit('status_update', {'status': 'healthy', 'message': f'{sensor} toggled to {enabled}'}, broadcast=True)
+        emit('sensor_states', sensor_config, broadcast=True) # Send update to all clients
     else:
         print(f"Warning: Unknown sensor '{sensor}'")
 
@@ -851,8 +854,9 @@ def handle_set_glare_mode(data):
         with sensor_config_lock:
             sensor_config['glare_rescue_mode'] = mode
         print(f"Glare Rescue Mode set to {mode}")
-        emit('status_update', {'status': 'healthy', 'message': f'Glare Mode set to {mode}'})
-        emit('sensor_states', sensor_config) # Send updated config back
+        # Broadcast to all connected clients
+        emit('status_update', {'status': 'healthy', 'message': f'Glare Mode set to {mode}'}, broadcast=True)
+        emit('sensor_states', sensor_config, broadcast=True) # Send updated config back
     else:
         print(f"Warning: Unknown glare mode '{mode}'")
 

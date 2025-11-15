@@ -70,6 +70,7 @@ function updateGlareHistogram(histogramData, isAlert = false) {
 let systemState = {
     status: 'secure',
     alerts: [],
+    repositionAlertShownThisCycle: false,  // Track if alert was already shown for current reposition event
     metrics: {
         blur: { value: 0, status: 'secure' },
         shake: { value: 0, status: 'secure' },
@@ -149,6 +150,9 @@ function showRepositionAlert() {
 
 function dismissRepositionAlert() {
     repositionAlertModal.classList.add('hidden');
+    systemState.repositionAlertShownThisCycle = false;  // Reset flag
+    // Tell backend that alert was dismissed so it can reset tracking
+    socket.emit('dismiss_reposition_alert');
 }
 
 function checkAndClearAlerts() {
@@ -206,12 +210,14 @@ socket.on('detection_update', (data) => {
     }
 
     if (data.reposition) {
-        const repositionStatus = data.reposition.detected ? 'alert' : 'secure';
-        updateMetric('reposition', data.reposition.magnitude || 0, repositionStatus);
-
-        if (data.reposition.alert_active) {
+        if (data.reposition.alert_active && !systemState.repositionAlertShownThisCycle) {
+            // Only show alert once per repositioning event
+            systemState.repositionAlertShownThisCycle = true;
             showRepositionAlert();
             triggerAlert('REPOSITION', '🚨 CAMERA REPOSITIONING DETECTED - SUSTAINED MOVEMENT!');
+        } else if (!data.reposition.alert_active) {
+            // Reset flag when alert clears
+            systemState.repositionAlertShownThisCycle = false;
         }
     }
 

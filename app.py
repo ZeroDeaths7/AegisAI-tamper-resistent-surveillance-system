@@ -27,7 +27,7 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 # Configuration
 BLUR_THRESHOLD = 100.0
 SHAKE_THRESHOLD = 6.0
-REPOSITION_THRESHOLD = 8.0  # Higher than shake threshold (6.0) - requires stronger sustained motion
+REPOSITION_THRESHOLD = 5.0  # Threshold for directional shift magnitude - lower for easier detection
 CAMERA_INDEX = 0
 BLUR_FIX_ENABLED = True
 BLUR_FIX_STRENGTH = 5
@@ -39,6 +39,7 @@ current_frame = None  # Raw frame without text
 processed_frame = None  # Frame with detection text
 frame_lock = None
 reposition_alert_active = False
+reposition_alert_shown = False  # Track if we've already shown the alert for this event
 reposition_alert_frames = 0
 
 # ============================================================================
@@ -99,15 +100,23 @@ def camera_thread():
         is_glare, glare_percentage, glare_histogram = tamper_detector.check_glare(frame, threshold_pct=10.0)
         
         # Manage repositioning alert state
-        global reposition_alert_active, reposition_alert_frames
+        global reposition_alert_active, reposition_alert_shown, reposition_alert_frames
         if is_repositioned:
-            reposition_alert_active = True
             reposition_alert_frames = 0
-            print(f"🚨 REPOSITION DETECTED - Magnitude: {shift_magnitude:.2f}px, Shift: ({shift_x:.2f}, {shift_y:.2f})")
+            # Only set alert_active ONCE per repositioning event
+            if not reposition_alert_shown:
+                reposition_alert_shown = True
+                reposition_alert_active = True  # Send alert to frontend ONLY on first detection
+                print(f"🚨 REPOSITION DETECTED - Magnitude: {shift_magnitude:.2f}px, Shift: ({shift_x:.2f}, {shift_y:.2f})")
+            else:
+                # Motion still detected but we've already shown alert, keep it inactive
+                reposition_alert_active = False
         else:
             reposition_alert_frames += 1
             if reposition_alert_frames > 30:  # Clear alert after 30 frames without detection
-                reposition_alert_active = False
+                reposition_alert_shown = False  # Reset flag when motion fully stops
+            # Always keep alert inactive when motion isn't detected
+            reposition_alert_active = False
         
         # Prepare detection data for frontend
         detection_data = {
@@ -320,6 +329,13 @@ def handle_test_alert(data):
         'type': 'TEST',
         'message': data.get('message', 'Test alert from server')
     }, broadcast=True)
+
+@socketio.on('dismiss_reposition_alert')
+def handle_dismiss_reposition_alert():
+    """Handle reposition alert dismissal from frontend."""
+    global reposition_alert_shown
+    reposition_alert_shown = False
+    print("Reposition alert dismissed by user")
 
 # ============================================================================
 # STARTUP AND SHUTDOWN

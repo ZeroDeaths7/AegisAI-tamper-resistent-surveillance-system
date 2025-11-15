@@ -31,8 +31,10 @@ CAMERA_INDEX = 0
 # Global variables
 cap = None
 prev_gray = None
-current_frame = None
+current_frame_raw = None  # Raw frame without text
+current_frame_processed = None  # Frame with detection text
 frame_lock = None
+detection_data_cache = None  # Cache for detection data
 
 # ============================================================================
 # CAMERA AND DETECTION FUNCTIONS
@@ -62,7 +64,7 @@ def camera_thread():
     Continuously capture frames and run detections.
     This runs in a separate thread to avoid blocking.
     """
-    global prev_gray, current_frame, frame_lock
+    global prev_gray, current_frame_raw, current_frame_processed, frame_lock, detection_data_cache
     
     ret, first_frame = cap.read()
     if not ret:
@@ -98,24 +100,27 @@ def camera_thread():
                 'magnitude': float(shake_magnitude)
             },
             'glare': {
-                'detected': False,  # TODO: Implement glare detection
+                'detected': False,
                 'value': 0
             },
             'liveness': {
-                'frozen': False,  # TODO: Implement liveness detection
+                'frozen': False,
                 'value': 1
             }
         }
         
-        # Emit detection update to all connected clients (from non-request context)
+        # Cache detection data
+        detection_data_cache = detection_data
+        
+        # Emit detection update to all connected clients
         try:
-            with app.app_context():
-                socketio.emit('detection_update', detection_data, broadcast=True)
+            socketio.server.emit('detection_update', detection_data, broadcast=True)
         except Exception as e:
-            # Silently catch errors - Socket.IO might not be ready yet
             pass
         
-        # --- DISPLAY TEXT ON FRAME ---
+        # Create processed frame with detection text
+        frame_with_text = frame.copy()
+        
         # Blur status with color
         blur_status = "BLURRY" if is_blurred else "SHARP"
         blur_color = (0, 0, 255) if is_blurred else (0, 255, 0)  # Red or Green
@@ -124,25 +129,26 @@ def camera_thread():
         shake_status = "SHAKE" if is_shaken else "STABLE"
         shake_color = (0, 255, 255) if not is_shaken else (0, 0, 255)  # Bright Yellow or Red
         
-        # Add text to the frame
-        cv2.putText(frame, f"Blur: {blur_status}",
+        # Add text to the processed frame
+        cv2.putText(frame_with_text, f"Blur: {blur_status}",
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, blur_color, 2)
         
-        cv2.putText(frame, f"Shake: {shake_status}",
+        cv2.putText(frame_with_text, f"Shake: {shake_status}",
                     (300, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, shake_color, 2)
         
-        cv2.putText(frame, f"Blur Variance: {blur_variance:.2f} (Th: {BLUR_THRESHOLD:.0f})",
+        cv2.putText(frame_with_text, f"Blur Variance: {blur_variance:.2f} (Th: {BLUR_THRESHOLD:.0f})",
                     (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         
-        cv2.putText(frame, f"Shake Magnitude: {shake_magnitude:.2f} (Th: {SHAKE_THRESHOLD:.1f})",
+        cv2.putText(frame_with_text, f"Shake Magnitude: {shake_magnitude:.2f} (Th: {SHAKE_THRESHOLD:.1f})",
                     (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         
         # Update previous frame
         prev_gray = gray
         
-        # Store the current frame for streaming
+        # Store frames for streaming
         with frame_lock:
-            current_frame = frame.copy()
+            current_frame_raw = frame.copy()  # Raw frame without text
+            current_frame_processed = frame_with_text.copy()  # Frame with detection text
         
         # Small delay to prevent CPU overload
         if frame_count % 10 == 0:
@@ -190,16 +196,16 @@ def index():
 
 @app.route('/video_frame')
 def video_frame():
-    """Serve a single JPEG frame from the raw feed."""
-    global current_frame, frame_lock
+    """Serve a single JPEG frame from the raw feed (without detection text)."""
+    global current_frame_raw, frame_lock
     
-    if current_frame is None:
+    if current_frame_raw is None:
         return "No frame available", 503
     
     with frame_lock:
-        if current_frame is None:
+        if current_frame_raw is None:
             return "No frame available", 503
-        frame = current_frame.copy()
+        frame = current_frame_raw.copy()
     
     # Encode frame as JPEG
     ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -210,9 +216,23 @@ def video_frame():
 
 @app.route('/processed_frame')
 def processed_frame():
-    """Serve a single JPEG frame from the processed feed."""
-    # For now, same as raw feed. TODO: Apply CLAHE processing
-    return video_frame()
+    """Serve a single JPEG frame from the processed feed (with detection text)."""
+    global current_frame_processed, frame_lock
+    
+    if current_frame_processed is None:
+        return "No frame available", 503
+    
+    with frame_lock:
+        if current_frame_processed is None:
+            return "No frame available", 503
+        frame = current_frame_processed.copy()
+    
+    # Encode frame as JPEG
+    ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    if not ret:
+        return "Could not encode frame", 500
+    
+    return Response(buffer.tobytes(), mimetype='image/jpeg')
 
 @app.route('/video_feed')
 def video_feed():

@@ -13,6 +13,11 @@ def apply_msr_hsv(frame, scales=[11, 81, 251]):
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(hsv)
     
+    # --- NEW: DENOISING ---
+    # Denoise the V (Value) channel BEFORE MSR
+    # h=10 is the filter strength. Higher = stronger (and slower)
+    v_denoised = cv2.fastNlMeansDenoising(v, None, h=10, templateWindowSize=7, searchWindowSize=21)
+
     # --- MSR on V-channel ---
     # Convert to log space (log(1 + V) to avoid log(0))
     log_v = np.log1p(v.astype(np.float32))
@@ -102,7 +107,7 @@ if __name__ == "__main__":
         print("ERROR: Cannot open camera.")
         exit()
         
-    clahe = cv2.createCLAHE(clipLimit=12.0, tileGridSize=(4, 4))
+    clahe = cv2.createCLAHE(clipLimit=16.0, tileGridSize=(4, 4))
     
     # --- Rescue Mode State ---
     rescue_mode = 'CLAHE' # Start with CLAHE
@@ -140,15 +145,25 @@ if __name__ == "__main__":
         # 2. --- ACTIVE DEFENSE LOGIC (with TOGGLE) ---
         if is_glare:
             if rescue_mode == 'CLAHE':
-                # --- CLAHE + Unsharp (Your proven method) ---
+                # --- 1. CLAHE Rescue ---
                 lab_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
                 l, a, b = cv2.split(lab_frame)
                 l_clahe = clahe.apply(l)
                 enhanced_lab_frame = cv2.merge((l_clahe, a, b))
                 clahe_rescued_frame = cv2.cvtColor(enhanced_lab_frame, cv2.COLOR_LAB2BGR)
+                
+                # --- 2. Sharpening ---
                 processed_frame = apply_unsharp_mask(clahe_rescued_frame, amount=1.0)
                 
-                status_text = "GLARE (RESCUE: CLAHE + SHARPEN)"
+                # --- 3. NEW HACK: TAME HIGHLIGHTS ---
+                # Find the original blown-out highlights
+                gray_raw = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                ret, mask = cv2.threshold(gray_raw, 252, 255, cv2.THRESH_BINARY)
+                # Set those pixels to a neutral gray
+                processed_frame[mask > 0] = (150, 150, 150) 
+                # --- END OF HACK ---
+
+                status_text = "GLARE (RESCUE: CLAHE + HACK)"
                 text_color = (0, 0, 255) # Red
             
             else: # rescue_mode == 'MSR'

@@ -18,6 +18,7 @@ from werkzeug.utils import secure_filename
 # Import backend modules
 from backend.database import aegis_db, save_glare_image, get_incident_description
 from backend.watermark_validator import validate_video_watermarks, validate_video_watermarks_basic
+from backend.pocketsphinx_recognizer import get_pocketsphinx_recognizer, is_pocketsphinx_available
 
 # Try to import glare rescue functions, but make them optional
 try:
@@ -160,11 +161,22 @@ def record_detection(detection_type, timestamp):
 def audio_logging_thread():
     """
     Audio logging thread that continuously listens for speech when triggered.
+    Uses PocketSphinx for fast, uncensored, offline speech recognition.
+    Falls back to Google Speech Recognition if PocketSphinx unavailable.
     Runs in a separate daemon thread and sends recognized speech to the frontend.
     """
     global LOG_AUDIO_SUBTITLES
     
-    r = speech_recognition.Recognizer()
+    # Try to use PocketSphinx first (fast, uncensored, offline)
+    ps_recognizer = get_pocketsphinx_recognizer()
+    use_pocketsphinx = is_pocketsphinx_available()
+    
+    if use_pocketsphinx:
+        print("[AUDIO] ✓ Using PocketSphinx for speech recognition (fast, uncensored)")
+    else:
+        print("[AUDIO] ⚠ PocketSphinx not available, falling back to Google API")
+        r = speech_recognition.Recognizer()
+    
     print("[AUDIO] Audio logger thread started - waiting for tamper detection...")
     
     while True:
@@ -174,15 +186,33 @@ def audio_logging_thread():
         
         if should_log:
             try:
-                with speech_recognition.Microphone() as source:
-                    print("[AUDIO] Listening for speech...")
-                    audio = r.listen(source, timeout=3, phrase_time_limit=5)
-                    print("[AUDIO] Audio received, recognizing...")
+                if use_pocketsphinx:
+                    # Use PocketSphinx (fast, uncensored, offline)
+                    text = ps_recognizer.listen_and_recognize(timeout_seconds=1.5)
+                else:
+                    # Fallback to Google Speech Recognition
+                    try:
+                        with speech_recognition.Microphone() as source:
+                            print("[AUDIO] Listening for speech...")
+                            audio = r.listen(source, timeout=1.5, phrase_time_limit=3)
+                        
+                        try:
+                            text = r.recognize_google(audio)
+                            print(f"[AUDIO] ✓ Recognized (Google): {text}")
+                        except speech_recognition.UnknownValueError:
+                            print("[AUDIO] Could not understand audio")
+                            text = ""
+                        except speech_recognition.RequestError as e:
+                            print(f"[AUDIO] API Error: {e}")
+                            text = ""
+                    except speech_recognition.WaitTimeoutError:
+                        print("[AUDIO] No speech detected (timeout)")
+                        text = ""
+                    except Exception as e:
+                        print(f"[AUDIO] Microphone error: {e}")
+                        text = ""
                 
-                try:
-                    text = r.recognize_google(audio)
-                    print(f"[AUDIO] Recognized speech: {text}")
-                    
+                if text:
                     # Save audio log to database
                     audio_timestamp = time.time()
                     try:
@@ -202,19 +232,11 @@ def audio_logging_thread():
                             print(f"[AUDIO] ✓ Subtitle emitted: {text}")
                     except Exception as e:
                         print(f"[AUDIO] ✗ Error emitting subtitle: {e}")
-                except speech_recognition.UnknownValueError:
-                    print("[AUDIO] Could not understand audio")
-                except speech_recognition.RequestError as e:
-                    print(f"[AUDIO] API Error: {e}")
                 
-            except speech_recognition.WaitTimeoutError:
-                print("[AUDIO] No speech detected (timeout)")
-            except speech_recognition.MicrophoneError as e:
-                print(f"[AUDIO] Microphone error: {e}")
             except Exception as e:
                 print(f"[AUDIO] ✗ Error: {e}")
         else:
-            time.sleep(1)  # Sleep when not logging
+            time.sleep(0.5)  # Sleep when not logging
 
 def camera_thread():
     """

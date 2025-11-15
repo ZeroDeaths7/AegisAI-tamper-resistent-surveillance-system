@@ -6,3 +6,4 @@ SpeechRecognition
 PyAudio
 pytesseract
 Pillow
+pocketsphinx

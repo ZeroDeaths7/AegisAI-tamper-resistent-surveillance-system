@@ -278,6 +278,41 @@ function startVideoStream() {
         const timestamp = new Date().getTime();
         processedFeed.src = `/processed_frame?t=${timestamp}`;
     }, 100);
+    
+    // Poll the HTTP API for detection data as fallback
+    setInterval(() => {
+        fetch('/api/detection')
+            .then(response => {
+                if (!response.ok) throw new Error('Network response was not ok');
+                return response.json();
+            })
+            .then(data => {
+                console.log('Detection data from API:', data);
+                
+                if (data.blur) {
+                    const blurStatus = data.blur.detected ? 'alert' : 'secure';
+                    updateMetric('blur', data.blur.variance || 0, blurStatus);
+                }
+
+                if (data.shake) {
+                    const shakeStatus = data.shake.detected ? 'alert' : 'secure';
+                    updateMetric('shake', data.shake.magnitude || 0, shakeStatus);
+                }
+
+                if (data.glare) {
+                    const glareStatus = data.glare.detected ? 'alert' : 'secure';
+                    updateMetric('glare', data.glare.detected ? 1 : 0, glareStatus);
+                }
+
+                if (data.liveness) {
+                    const livenessStatus = data.liveness.frozen ? 'alert' : 'secure';
+                    updateMetric('liveness', data.liveness.frozen ? 0 : 1, livenessStatus);
+                }
+            })
+            .catch(error => {
+                // Silently fail - Socket.IO should handle this
+            });
+    }, 200);
 }
 
 if (typeof module !== 'undefined' && module.exports) {

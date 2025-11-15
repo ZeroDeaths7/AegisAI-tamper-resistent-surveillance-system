@@ -115,8 +115,10 @@ def camera_thread():
         # Emit detection update to all connected clients
         try:
             socketio.server.emit('detection_update', detection_data, broadcast=True)
+            if frame_count % 30 == 0:
+                print(f"Emitted detection data: Blur={blur_variance:.2f}, Shake={shake_magnitude:.2f}")
         except Exception as e:
-            pass
+            print(f"Error emitting detection data: {e}")
         
         # Create processed frame with detection text
         frame_with_text = frame.copy()
@@ -233,6 +235,16 @@ def processed_frame():
         return "Could not encode frame", 500
     
     return Response(buffer.tobytes(), mimetype='image/jpeg')
+
+@app.route('/api/detection')
+def get_detection():
+    """Get the latest detection data as JSON."""
+    global detection_data_cache
+    
+    if detection_data_cache is None:
+        return {"error": "No detection data available"}, 503
+    
+    return detection_data_cache
 
 @app.route('/video_feed')
 def video_feed():

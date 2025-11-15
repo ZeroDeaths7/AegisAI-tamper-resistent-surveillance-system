@@ -91,7 +91,7 @@ body {
 }
 
 .video-panel.vulnerable .panel-overlay {
-    background: linear-gradient(135deg, rgba(255, 59, 59, 0.1) 0%, rgba(255, 59, 59, 0.05) 100%);
+    background: transparent;
 }
 
 .video-panel.defended {
@@ -100,7 +100,7 @@ body {
 }
 
 .video-panel.defended .panel-overlay {
-    background: linear-gradient(135deg, rgba(0, 229, 255, 0.1) 0%, rgba(0, 229, 255, 0.05) 100%);
+    background: transparent;
 }
 
 .panel-title {

@@ -129,6 +129,7 @@ function updateSystemStatus(isAlert = false) {
     }
 }
 
+
 function triggerAlert(alertType, message) {
     const time = getCurrentTime();
 
@@ -136,7 +137,6 @@ function triggerAlert(alertType, message) {
     systemState.alerts.push({ type: alertType, time, message });
     updateSystemStatus(true);
     addLogEntry(`${alertType}: ${message}`, 'alert');
-    playAlertSound();
 }
 
 function checkAndClearAlerts() {
@@ -155,27 +155,7 @@ function checkAndClearAlerts() {
     }
 }
 
-function playAlertSound() {
-    try {
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const oscillator = audioContext.createOscillator();
-        const gainNode = audioContext.createGain();
 
-        oscillator.connect(gainNode);
-        gainNode.connect(audioContext.destination);
-
-        oscillator.frequency.value = 800;
-        oscillator.type = 'sine';
-
-        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
-
-        oscillator.start(audioContext.currentTime);
-        oscillator.stop(audioContext.currentTime + 0.1);
-    } catch (e) {
-        console.log('Audio context not available');
-    }
-}
 
 // ============================================================================
 // SOCKET.IO EVENT HANDLERS

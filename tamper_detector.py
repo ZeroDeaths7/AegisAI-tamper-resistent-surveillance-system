@@ -90,3 +90,34 @@ def check_glare(frame, threshold_pct=10.0):
     # Return stats
     is_glare = percentage > threshold_pct
     return is_glare, percentage, histogram
+
+def fix_blur_unsharp_mask(frame, kernel_size=5, sigma=1.0, strength=1.5):
+    """
+    Fix blur using Unsharp Masking technique.
+    Enhances edges and makes blurry images appear sharper in real-time.
+    
+    Args:
+        frame (numpy.ndarray): Input BGR frame.
+        kernel_size (int): Gaussian blur kernel size (must be odd, default 5).
+        sigma (float): Standard deviation for Gaussian blur (default 1.0).
+        strength (float): How much sharpening to apply. 
+                         1.0 = no effect, >1.0 = sharpen (default 1.5).
+    
+    Returns:
+        numpy.ndarray: Sharpened BGR frame with same dimensions as input.
+    """
+    # Ensure kernel size is odd
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    
+    # Create blurred version (low-pass filter)
+    blurred = cv2.GaussianBlur(frame, (kernel_size, kernel_size), sigma)
+    
+    # Unsharp mask formula: output = original + (original - blurred) * strength
+    # This amplifies the high-frequency details (edges)
+    sharpened = cv2.addWeighted(frame, 1.0 + strength, blurred, -strength, 0)
+    
+    # Clip values to valid range [0, 255] and convert to uint8
+    sharpened = np.clip(sharpened, 0, 255).astype(np.uint8)
+    
+    return sharpened

@@ -17,8 +17,8 @@ import time
 # ============================================================================
 
 app = Flask(__name__, 
-            template_folder='./frontend',
-            static_folder='./frontend',
+            template_folder='./Frontend',
+            static_folder='./Frontend',
             static_url_path='')
 
 socketio = SocketIO(app, cors_allowed_origins="*")
@@ -186,7 +186,7 @@ def gen_frames():
 @app.route('/')
 def index():
     """Serve the main dashboard HTML."""
-    return send_from_directory('./frontend', 'index.html')
+    return send_from_directory('./Frontend', 'index.html')
 
 @app.route('/video_frame')
 def video_frame():
@@ -229,12 +229,12 @@ def processed_feed():
 @app.route('/style.css')
 def serve_css():
     """Serve the CSS file."""
-    return send_from_directory('.', 'style.css')
+    return send_from_directory('./Frontend', 'style.css')
 
 @app.route('/script.js')
 def serve_js():
     """Serve the JavaScript file."""
-    return send_from_directory('.', 'script.js')
+    return send_from_directory('./Frontend', 'script.js')
 
 # ============================================================================
 # SOCKET.IO EVENT HANDLERS

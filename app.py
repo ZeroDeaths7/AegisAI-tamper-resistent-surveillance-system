@@ -14,6 +14,10 @@ import threading
 import time
 import speech_recognition
 from werkzeug.utils import secure_filename
+from twilio.rest import Client
+from dotenv import load_dotenv
+
+load_dotenv()  # Load environment variables from .env file
 
 # Import backend modules
 from backend.database import aegis_db, save_glare_image, get_incident_description
@@ -23,7 +27,7 @@ from backend.pocketsphinx_recognizer import get_pocketsphinx_recognizer, is_pock
 
 # Try to import glare rescue functions, but make them optional
 try:
-    # <--- FIX 1: Only import functions that exist in your new file ---
+    # <--- FIX 1: Only import the functions that actually exist ---
     from Sensor.glare_rescue import (
         apply_unsharp_mask, 
         get_image_viability_stats
@@ -59,7 +63,36 @@ BLUR_FIX_STRENGTH = 5
 GLARE_RESCUE_ENABLED = True  # This is controlled by sensor_config
 GLARE_RESCUE_MODE = 'MSR'  # This is controlled by sensor_config
 
-# <--- FIX 2: Use your tuned CLAHE parameters ---
+
+# --- Twilio Configuration ---
+try:
+    # os.environ.get() will now read the values loaded from .env
+    TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
+    TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
+    TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER')
+    YOUR_VERIFIED_PHONE = os.environ.get('YOUR_VERIFIED_PHONE')
+    
+    if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER, YOUR_VERIFIED_PHONE]):
+        print("--- WARNING: TWILIO CREDENTIALS NOT FOUND IN .env FILE ---")
+        print("SMS alerts will be disabled. Please create a .env file.")
+        TWILIO_ENABLED = False
+    else:
+        twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        TWILIO_ENABLED = True
+        print("✓ .env file loaded and Twilio client initialized for SMS alerts.")
+        
+except Exception as e:
+    print(f"--- ERROR: FAILED TO INITIALIZE TWILIO ---")
+    print(f"{e}")
+    TWILIO_ENABLED = False
+
+# --- SMS Cool-down (To prevent spamming) ---
+SMS_COOLDOWN_SECONDS = 60 # Only send one SMS per 60 seconds
+last_sms_sent_time = 0
+
+
+
+# <--- FIX 2: Use your tuned CLAHE parameters (clipLimit=16.0) ---
 if GLARE_RESCUE_AVAILABLE:
     clahe = cv2.createCLAHE(clipLimit=16.0, tileGridSize=(4, 4))
 else:
@@ -117,6 +150,24 @@ current_incident_id = None
 last_detection_timestamp = None
 detection_tracking_lock = threading.Lock()
 
+# ... (rest of config)
+
+# --- Twilio Configuration ---
+# (This block is duplicated in your file, which is fine, but just noting)
+try:
+    TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
+    # ... (rest of Twilio config) ...
+except Exception as e:
+    TWILIO_ENABLED = False
+
+# --- SMS Cool-down (To prevent spamming) ---
+last_sms_sent_time = 0
+
+# ... (rest of global variables)
+
+
+
+
 # Storage configuration
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'storage', 'liveness_videos')
 ALLOWED_EXTENSIONS = {'mp4', 'avi', 'mov', 'mkv'}
@@ -162,9 +213,6 @@ def record_detection(detection_type, timestamp):
 def audio_logging_thread():
     """
     Audio logging thread that continuously listens for speech when triggered.
-    Uses PocketSphinx for fast, uncensored, offline speech recognition.
-    Falls back to Google Speech Recognition if PocketSphinx unavailable.
-    Runs in a separate daemon thread and sends recognized speech to the frontend.
     """
     global LOG_AUDIO_SUBTITLES
     
@@ -247,6 +295,8 @@ def camera_thread():
     global prev_gray, current_frame, processed_frame, frame_lock, detection_data_cache
     global liveness_reference_frame, liveness_reference_time, liveness_startup_time
     global liveness_is_frozen, liveness_status_text, clahe
+    global reposition_alert_active, reposition_alert_shown, reposition_alert_frames # <--- FIX 3: Moved global declaration to the top
+    global last_sms_sent_time # <--- NEW: Added this global for the SMS function
     
     print("[CAMERA] Camera thread starting...")
     
@@ -289,13 +339,14 @@ def camera_thread():
             gray, prev_gray, threshold_shift=REPOSITION_THRESHOLD
         )
         
-        # <--- FIX 3: Replace old glare check with the robust one ---
-        # is_glare, glare_percentage, glare_histogram = tamper_detector.check_glare(frame, threshold_pct=10.0) # <--- DELETED
+        # <--- FIX 4: REMOVED the old tamper_detector.check_glare() call ---
+        # is_glare, glare_percentage, glare_histogram = tamper_detector.check_glare(frame, threshold_pct=10.0) 
         
         # Read sensor configuration (thread-safe)
         with sensor_config_lock:
             sensor_enabled = sensor_config.copy()
 
+        # <--- FIX 5: Use the correct, robust glare detector ---
         if GLARE_RESCUE_AVAILABLE and sensor_enabled['glare']:
             # Use your tuned thresholds
             is_glare, dark_pct, mid_pct, bright_pct, hist_for_plot, _ = get_image_viability_stats(
@@ -357,24 +408,8 @@ def camera_thread():
         # Determine if ANY tamper is detected (for audio logging trigger)
         any_tamper_detected = is_blurred or is_shaken or is_glare or is_frozen or is_blackout or is_major_tamper
         
-        # --- RECORD DETECTIONS TO DATABASE ---
-        if is_blurred:
-            record_detection('blur', current_time)
-        if is_shaken:
-            record_detection('shake', current_time)
-        if is_glare:
-            record_detection('glare', current_time)
-        if is_repositioned:
-            record_detection('reposition', current_time)
-        if is_frozen:
-            record_detection('freeze', current_time)
-        if is_blackout:
-            record_detection('blackout', current_time)
-        if is_major_tamper:
-            record_detection('major_tamper', current_time)
-        
         # Manage repositioning alert state
-        global reposition_alert_active, reposition_alert_shown, reposition_alert_frames
+        # (The 'global' declaration was moved to the top of the function)
         if is_repositioned:
             reposition_alert_frames = 0
             # Only set alert_active ONCE per repositioning event
@@ -391,8 +426,40 @@ def camera_thread():
                 reposition_alert_shown = False  # Reset flag when motion fully stops
             # Always keep alert inactive when motion isn't detected
             reposition_alert_active = False
+
+        # --- NEW: MAJOR ALERT SMS TRIGGER ---
+        is_major_alert = reposition_alert_active or is_blackout or is_frozen
         
-        # <--- FIX 4: Populate detection_data with the NEW glare stats ---
+        if is_major_alert and sensor_enabled['audio_alerts']: # Use audio_alerts as a master SMS toggle
+            alert_message = ""
+            if reposition_alert_active:
+                alert_message = "CRITICAL: Camera Repositioning Detected!"
+            elif is_blackout:
+                alert_message = "CRITICAL: Blackout Detected! Feed is dark."
+            elif is_frozen:
+                alert_message = "CRITICAL: Frozen Feed Detected! Possible replay attack."
+            
+            # This function has its own cool-down logic
+            send_sms_alert(alert_message)
+
+
+        # --- RECORD DETECTIONS TO DATABASE ---
+        if is_blurred:
+            record_detection('blur', current_time)
+        if is_shaken:
+            record_detection('shake', current_time)
+        if is_glare:
+            record_detection('glare', current_time)
+        if is_repositioned:
+            record_detection('reposition', current_time)
+        if is_frozen:
+            record_detection('freeze', current_time)
+        if is_blackout:
+            record_detection('blackout', current_time)
+        if is_major_tamper:
+            record_detection('major_tamper', current_time)
+        
+        # Prepare detection data for frontend
         detection_data = {
             'blur': {
                 'detected': bool(is_blurred),
@@ -409,6 +476,7 @@ def camera_thread():
                 'shift_y': float(shift_y),
                 'alert_active': bool(reposition_alert_active)
             },
+            # <--- FIX 6: Send the correct glare data ---
             'glare': {
                 'detected': bool(is_glare),
                 'dark_pct': float(dark_pct),
@@ -428,7 +496,6 @@ def camera_thread():
         }
         
         # --- AUDIO LOGGING TRIGGER ---
-        # Audio logging is triggered when ANY tamper (blur, shake, glare) is detected
         global LOG_AUDIO_SUBTITLES
         should_enable_audio = any_tamper_detected and sensor_enabled['audio_alerts']
         
@@ -475,7 +542,7 @@ def camera_thread():
         # --- GLARE RESCUE (Applied FIRST, before blur fixing) ---
         frame_for_processing = frame.copy()  # Start with original frame
         
-        # <--- FIX 5: Replaced rescue block with your tuned CLAHE pipeline ---
+        # <--- FIX 7: Replace rescue block with your tuned CLAHE pipeline ---
         if is_glare and sensor_enabled['glare_rescue'] and clahe is not None:
             try:
                 with sensor_config_lock:
@@ -584,6 +651,40 @@ def gen_frames():
                b'Content-Type: image/jpeg\r\n'
                b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n\r\n'
                + frame_bytes + b'\r\n')
+
+
+def send_sms_alert(body_text):
+    """
+    Sends an SMS alert using Twilio.
+    Includes a cool-down to prevent spam.
+    """
+    global last_sms_sent_time
+    
+    current_time = time.time()
+    
+    if not TWILIO_ENABLED:
+        print("[SMS] Skipped: Twilio is not enabled.")
+        return
+        
+    # Check if we are in the cool-down period
+    if current_time - last_sms_sent_time < SMS_COOLDOWN_SECONDS:
+        print(f"[SMS] Skipped: In cool-down period. {int(SMS_COOLDOWN_SECONDS - (current_time - last_sms_sent_time))}s left.")
+        return
+        
+    try:
+        print(f"[SMS] Sending alert: {body_text}")
+        message = twilio_client.messages.create(
+            body=f"🚨 AEGIS ALERT 🚨\n{body_text}",
+            from_=TWILIO_PHONE_NUMBER,
+            to=YOUR_VERIFIED_PHONE
+        )
+        print(f"[SMS] ✓ Success! Message SID: {message.sid}")
+        last_sms_sent_time = current_time # Reset cool-down
+        
+    except Exception as e:
+        print(f"[SMS] ✗ FAILED TO SEND SMS: {e}")
+
+
 
 # ============================================================================
 # FLASK ROUTES

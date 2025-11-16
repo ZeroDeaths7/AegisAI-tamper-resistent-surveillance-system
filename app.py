@@ -80,11 +80,11 @@ sensor_config = {
 sensor_config_lock = threading.Lock()  # Thread-safe config updates
 
 # Liveness detection configuration
-LIVENESS_THRESHOLD = 3.0        # LOW threshold: detects freezing/static feed
+LIVENESS_THRESHOLD = 5.0        # LOW threshold: detects freezing/static feed
 MAJOR_TAMPER_THRESHOLD = 60.0   # HIGH threshold: detects sudden, massive scene change
 BLACKOUT_BRIGHTNESS_THRESHOLD = 25.0  # Mean pixel intensity threshold for blackout (0-255 range)
 LIVENESS_CHECK_INTERVAL = 3.0   # Time (in seconds) between capturing a new reference frame
-LIVENESS_ACTIVATION_TIME = 4.0 # Time (s) after startup before "FROZEN FEED ALERT" becomes active
+LIVENESS_ACTIVATION_TIME = 8.0 # Time (s) after startup before "FROZEN FEED ALERT" becomes active
 
 # Global variables
 cap = None
@@ -312,9 +312,8 @@ def camera_thread():
         # Check if grace period (10s startup) has passed
         is_liveness_active = (current_time - liveness_startup_time) > LIVENESS_ACTIVATION_TIME
         
-        # Determine liveness state
+        # Determine liveness state - frozen feed and blackout detection
         is_blackout = mean_brightness < BLACKOUT_BRIGHTNESS_THRESHOLD
-        is_major_tamper = mean_diff > MAJOR_TAMPER_THRESHOLD
         is_frozen = False
         
         if is_liveness_active and mean_diff < LIVENESS_THRESHOLD:
@@ -323,8 +322,6 @@ def camera_thread():
         # Update liveness status text
         if is_blackout:
             liveness_status_text = "BLACKOUT DETECTED"
-        elif is_major_tamper:
-            liveness_status_text = "MAJOR TAMPER DETECTED"
         elif is_frozen:
             liveness_status_text = "FROZEN FEED ALERT"
         elif not is_liveness_active:
@@ -349,13 +346,13 @@ def camera_thread():
         if not sensor_enabled['glare']:
             is_glare = False
         if not sensor_enabled['liveness']:
-            is_frozen = is_blackout = is_major_tamper = False
+            is_frozen = is_blackout = False
             liveness_status_text = "INITIALIZING"
         if not sensor_enabled['reposition']:
             is_repositioned = False
         
         # Determine if ANY tamper is detected (for audio logging trigger)
-        any_tamper_detected = is_blurred or is_shaken or is_glare or is_frozen or is_blackout or is_major_tamper
+        any_tamper_detected = is_blurred or is_shaken or is_glare or is_frozen or is_blackout
         
         # --- RECORD DETECTIONS TO DATABASE ---
         if is_blurred:
@@ -370,8 +367,6 @@ def camera_thread():
             record_detection('freeze', current_time)
         if is_blackout:
             record_detection('blackout', current_time)
-        if is_major_tamper:
-            record_detection('major_tamper', current_time)
         
         # Manage repositioning alert state
         global reposition_alert_active, reposition_alert_shown, reposition_alert_frames
@@ -419,7 +414,6 @@ def camera_thread():
             'liveness': {
                 'frozen': bool(is_frozen),
                 'blackout': bool(is_blackout),
-                'major_tamper': bool(is_major_tamper),
                 'status': liveness_status_text,
                 'mean_diff': float(mean_diff),
                 'mean_brightness': float(mean_brightness),

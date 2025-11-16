@@ -80,11 +80,10 @@ sensor_config = {
 sensor_config_lock = threading.Lock()  # Thread-safe config updates
 
 # Liveness detection configuration
-LIVENESS_THRESHOLD = 12.0        # LOW threshold: detects freezing/static feed
-MAJOR_TAMPER_THRESHOLD = 60.0   # HIGH threshold: detects sudden, massive scene change
+LIVENESS_THRESHOLD = 3.0        # LOW threshold: detects freezing/static feed
 BLACKOUT_BRIGHTNESS_THRESHOLD = 25.0  # Mean pixel intensity threshold for blackout (0-255 range)
 LIVENESS_CHECK_INTERVAL = 3.0   # Time (in seconds) between capturing a new reference frame
-LIVENESS_ACTIVATION_TIME = 8.0 # Time (s) after startup before "FROZEN FEED ALERT" becomes active
+LIVENESS_ACTIVATION_TIME = 10.0 # Time (s) after startup before "FROZEN FEED ALERT" becomes active
 
 # Global variables
 cap = None

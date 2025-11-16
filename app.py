@@ -50,9 +50,9 @@ app = Flask(__name__,
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Configuration
-BLUR_THRESHOLD = 70.0
-SHAKE_THRESHOLD = 6.0
-REPOSITION_THRESHOLD = 10.0  # Threshold for directional shift magnitude - reduced false positives
+BLUR_THRESHOLD = 25.0
+SHAKE_THRESHOLD = 5.0
+REPOSITION_THRESHOLD = 7.0  # Threshold for directional shift magnitude - reduced false positives
 CAMERA_INDEX = 0
 BLUR_FIX_ENABLED = True
 BLUR_FIX_STRENGTH = 5
@@ -80,11 +80,11 @@ sensor_config = {
 sensor_config_lock = threading.Lock()  # Thread-safe config updates
 
 # Liveness detection configuration
-LIVENESS_THRESHOLD = 2.0        # LOW threshold: detects freezing/static feed
+LIVENESS_THRESHOLD = 3.0        # LOW threshold: detects freezing/static feed
 MAJOR_TAMPER_THRESHOLD = 60.0   # HIGH threshold: detects sudden, massive scene change
 BLACKOUT_BRIGHTNESS_THRESHOLD = 25.0  # Mean pixel intensity threshold for blackout (0-255 range)
 LIVENESS_CHECK_INTERVAL = 3.0   # Time (in seconds) between capturing a new reference frame
-LIVENESS_ACTIVATION_TIME = 10.0 # Time (s) after startup before "FROZEN FEED ALERT" becomes active
+LIVENESS_ACTIVATION_TIME = 4.0 # Time (s) after startup before "FROZEN FEED ALERT" becomes active
 
 # Global variables
 cap = None

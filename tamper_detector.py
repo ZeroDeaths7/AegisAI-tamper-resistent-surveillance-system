@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-def check_blur(gray_frame, threshold=100.0):
+def check_blur(gray_frame, threshold=50.0):
     """
     Checks if a grayscale frame is blurry using the Laplacian variance method.
     
